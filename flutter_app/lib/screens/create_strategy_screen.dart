@@ -46,10 +46,7 @@ abstract final class _K {
 // ─────────────────────────────────────────────────────────────────────────────
 enum _StratType { options, stocks }
 
-// Step labels differ by flow type
-List<String> _stepsFor(_StratType t) => t == _StratType.options
-    ? ['Setup', 'Conditions', 'Legs & Payoff', 'Risk & Exit', 'Review']
-    : ['Setup', 'Conditions', 'Position', 'Risk & Exit', 'Review'];
+// (Step labels removed — single-scroll layout, no step wizard)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Stock instrument model — returned by /search-instruments or Firestore
@@ -434,10 +431,17 @@ class CreateStrategyScreen extends StatefulWidget {
 }
 
 class _CSS extends State<CreateStrategyScreen> {
-  final _pageCtrl = PageController();
-  int  _step   = 0;
+  // Single-scroll — no PageController / step index needed
+  final _scrollCtrl = ScrollController();
   bool _saving = false;
   bool get _editing => widget.editDocId != null;
+
+  // Section expand/collapse state
+  bool _secSetup      = true;
+  bool _secConditions = true;
+  bool _secLegs       = true;
+  bool _secRisk       = true;
+  bool _secBacktest   = false;
 
   // ── Strategy type (Options vs Stocks) ──────────────────────────────────────
   _StratType _stratType = _StratType.options;
@@ -528,7 +532,7 @@ class _CSS extends State<CreateStrategyScreen> {
   bool             _btRunning    = false;
   String           _btRange      = '3 Months'; // backtest date range
 
-  List<String> get _steps => _stepsFor(_stratType);
+  // (single-scroll — no step list needed)
 
   @override
   void initState() {
@@ -696,7 +700,7 @@ class _CSS extends State<CreateStrategyScreen> {
 
   @override
   void dispose() {
-    _pageCtrl.dispose();
+    _scrollCtrl.dispose();
     _nameCtrl.dispose();
     _slCtrl.dispose(); _tgtCtrl.dispose(); _maxLossCtrl.dispose();
     _capitalCtrl.dispose(); _lotsCtrl.dispose(); _pctCapCtrl.dispose();
@@ -705,12 +709,7 @@ class _CSS extends State<CreateStrategyScreen> {
     super.dispose();
   }
 
-  void _goto(int s) {
-    setState(() => _step = s);
-    _pageCtrl.animateToPage(s, duration: const Duration(milliseconds: 300), curve: Curves.easeInOut);
-  }
-
-  void _back() => _step > 0 ? _goto(_step - 1) : context.pop();
+  void _back() => context.pop();
 
   // ── Backtest ───────────────────────────────────────────────────────────────
   Future<void> _runBacktest() async {
@@ -806,11 +805,8 @@ class _CSS extends State<CreateStrategyScreen> {
         _filterConds.clear();
       });
 
-      // Navigate to Setup step so the user sees the populated fields.
-      // Always call _goto even if already on step 0 — it forces a PageView
-      // refresh so the updated name / style are immediately visible.
-      _pageCtrl.jumpToPage(0);
-      setState(() => _step = 0);
+      // Navigate to top so the user sees the populated fields.
+      _scrollCtrl.animateTo(0, duration: const Duration(milliseconds: 300), curve: Curves.easeInOut);
 
       _snack('✅ "${p.name}" template applied');
     });
@@ -995,14 +991,96 @@ class _CSS extends State<CreateStrategyScreen> {
   Widget build(BuildContext context) => Scaffold(
     backgroundColor: _K.bg,
     appBar: _appBar(),
-    body: Column(children: [
-      _StepBar(step: _step, steps: _steps),
-      Expanded(child: PageView(
-        controller: _pageCtrl,
-        physics: const NeverScrollableScrollPhysics(),
-        children: [_step1(), _step2(), _step3(), _step4(), _step5()],
-      )),
-    ]),
+    body: CustomScrollView(
+      controller: _scrollCtrl,
+      slivers: [
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(16, 18, 16, 120),
+          sliver: SliverList(
+            delegate: SliverChildListDelegate([
+              // ── Strategy type ──────────────────────────────────────────────
+              _TypeSelector(
+                selected: _stratType,
+                onChanged: (t) => setState(() {
+                  _stratType = t;
+                  _nameCtrl.text = t == _StratType.options ? 'My Options Strategy' : 'My Stock Strategy';
+                  _entryConds
+                    ..clear()
+                    ..addAll(t == _StratType.options
+                      ? [
+                          _Condition(indicator: 'EMA',          op: '>', valueA: '',   paramA: '20', paramB: '50'),
+                          _Condition(indicator: 'RSI',          op: '>', valueA: '60', paramA: '14'),
+                          _Condition(indicator: 'IV / IV Rank', op: '<', valueA: '30'),
+                        ]
+                      : [
+                          _Condition(indicator: 'EMA', op: '>', valueA: '',   paramA: '20', paramB: '50'),
+                          _Condition(indicator: 'RSI', op: '>', valueA: '50', paramA: '14'),
+                        ]);
+                  _exitConds.clear();
+                  _filterConds.clear();
+                }),
+              ),
+              const SizedBox(height: 20),
+
+              // ── SECTION 1: Setup ───────────────────────────────────────────
+              _SectionCard(
+                title: '1  Setup',
+                icon: Icons.tune_rounded,
+                expanded: _secSetup,
+                onToggle: () => setState(() => _secSetup = !_secSetup),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  _Label('Strategy Name'),
+                  _TxtInput(ctrl: _nameCtrl, hint: _stratType == _StratType.options ? 'My Options Strategy' : 'My Stock Strategy'),
+                  const SizedBox(height: 16),
+                  if (_stratType == _StratType.options) ..._optionsSetupFields(),
+                  if (_stratType == _StratType.stocks)  ..._stocksSetupFields(),
+                ]),
+              ),
+              const SizedBox(height: 12),
+
+              // ── SECTION 2: Conditions ──────────────────────────────────────
+              _SectionCard(
+                title: '2  Conditions',
+                icon: Icons.account_tree_rounded,
+                expanded: _secConditions,
+                onToggle: () => setState(() => _secConditions = !_secConditions),
+                child: _conditionsContent(),
+              ),
+              const SizedBox(height: 12),
+
+              // ── SECTION 3: Legs / Position ─────────────────────────────────
+              _SectionCard(
+                title: _stratType == _StratType.options ? '3  Option Legs' : '3  Position',
+                icon: _stratType == _StratType.options ? Icons.layers_rounded : Icons.bar_chart_rounded,
+                expanded: _secLegs,
+                onToggle: () => setState(() => _secLegs = !_secLegs),
+                child: _stratType == _StratType.options ? _legsContent2() : _stockPositionContent(),
+              ),
+              const SizedBox(height: 12),
+
+              // ── SECTION 4: Risk & Exit ─────────────────────────────────────
+              _SectionCard(
+                title: '4  Risk & Exit',
+                icon: Icons.shield_outlined,
+                expanded: _secRisk,
+                onToggle: () => setState(() => _secRisk = !_secRisk),
+                child: _riskContent(),
+              ),
+              const SizedBox(height: 12),
+
+              // ── SECTION 5: Backtest ────────────────────────────────────────
+              _SectionCard(
+                title: '5  Backtest',
+                icon: Icons.analytics_rounded,
+                expanded: _secBacktest,
+                onToggle: () => setState(() => _secBacktest = !_secBacktest),
+                child: _backtestContent(),
+              ),
+            ]),
+          ),
+        ),
+      ],
+    ),
     bottomNavigationBar: _bottomBar(),
   );
 
@@ -1059,38 +1137,26 @@ class _CSS extends State<CreateStrategyScreen> {
           ],
         ),
         child: Row(children: [
-          if (_step > 0) ...[
-            Expanded(child: _OutlineBtn(label: '← Back', onTap: _back, dark: true)),
-            const SizedBox(width: 10),
-          ],
-          if (_step < 4) ...[
-            Expanded(
-              flex: 2,
-              child: _PrimaryBtn(label: 'Next →', loading: false, onTap: () => _goto(_step + 1)),
+          Expanded(child: _OutlineBtn(
+            label: _saving ? 'Saving…' : 'Save Draft',
+            onTap: _saving ? () {} : _saveDraft,
+            dark: true,
+          )),
+          const SizedBox(width: 10),
+          Expanded(
+            flex: 2,
+            child: _PrimaryBtn(
+              label: _saving ? 'Deploying…' : '🚀 Deploy Now',
+              loading: _saving,
+              onTap: _saving ? null : _deployNow,
             ),
-          ] else ...[
-            // Final step — two actions: draft vs deploy
-            Expanded(child: _OutlineBtn(
-              label: _saving ? 'Saving…' : 'Save Draft',
-              onTap: _saving ? () {} : _saveDraft,
-              dark: true,
-            )),
-            const SizedBox(width: 10),
-            Expanded(
-              flex: 2,
-              child: _PrimaryBtn(
-                label: _saving ? 'Deploying…' : '🚀 Deploy Now',
-                loading: _saving,
-                onTap: _saving ? null : _deployNow,
-              ),
-            ),
-          ],
+          ),
         ]),
       ),
     ),
   );
 
-  // ── Templates sheet (Options only) ─────────────────────────────────────────
+  // ── Templates sheet ─────────────────────────────────────────────────────────
   void _showTemplatesSheet() {
     final presets = _buildPresets();
     showModalBottomSheet<void>(
@@ -1153,54 +1219,12 @@ class _CSS extends State<CreateStrategyScreen> {
   }
 
   // ════════════════════════════════════════════════════════════════════════════
-  // STEP 1 — SETUP
+  // SECTION 1 — SETUP fields
   // ════════════════════════════════════════════════════════════════════════════
-  Widget _step1() => ListView(
-    padding: const EdgeInsets.fromLTRB(16, 18, 16, 16),
-    children: [
-      // ── Strategy type selector (Quantman-style: Options vs Stocks) ──────────
-      _TypeSelector(
-        selected: _stratType,
-        onChanged: (t) => setState(() {
-          _stratType = t;
-          _nameCtrl.text = t == _StratType.options ? 'My Options Strategy' : 'My Stock Strategy';
-          // Reset conditions so options-only indicators (OI, PCR, IV, Option Premium)
-          // don't leak into the stocks flow with stale values
-          _entryConds
-            ..clear()
-            ..addAll(t == _StratType.options
-              ? [
-                  _Condition(indicator: 'EMA',  op: '>',  valueA: '',   paramA: '20', paramB: '50'),
-                  _Condition(indicator: 'RSI',  op: '>',  valueA: '60', paramA: '14'),
-                  _Condition(indicator: 'IV / IV Rank', op: '<', valueA: '30'),
-                ]
-              : [
-                  _Condition(indicator: 'EMA',  op: '>',  valueA: '',   paramA: '20', paramB: '50'),
-                  _Condition(indicator: 'RSI',  op: '>',  valueA: '50', paramA: '14'),
-                ]);
-          _exitConds.clear();
-          _filterConds.clear();
-        }),
-      ),
-      const SizedBox(height: 20),
-      _Label('Strategy Name'),
-      _TxtInput(ctrl: _nameCtrl, hint: _stratType == _StratType.options ? 'My Options Strategy' : 'My Stock Strategy'),
-      const SizedBox(height: 20),
-      if (_stratType == _StratType.options) ..._optionsSetupFields(),
-      if (_stratType == _StratType.stocks)  ..._stocksSetupFields(),
-    ],
-  );
-
-  // ── Options setup fields ───────────────────────────────────────────────────
   List<Widget> _optionsSetupFields() => [
     _Label('Market'),
-    _Chips(
-      // Forex removed; clean Indian-market focused list
-      options: const ['NSE F&O', 'BSE F&O', 'MCX'],
-      sel: _market,
-      onTap: (v) => setState(() => _market = v),
-    ),
-    const SizedBox(height: 20),
+    _Chips(options: const ['NSE F&O', 'BSE F&O', 'MCX'], sel: _market, onTap: (v) => setState(() => _market = v)),
+    const SizedBox(height: 16),
     Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         _Label('Underlying'),
@@ -1208,7 +1232,7 @@ class _CSS extends State<CreateStrategyScreen> {
       ])),
       const SizedBox(width: 12),
       Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        _Label('Expiry (all legs)'),
+        _Label('Expiry'),
         _Drop(
           value: _expiry,
           items: const ['Current Week', 'Next Week', 'Monthly', 'Far Month'],
@@ -1219,176 +1243,84 @@ class _CSS extends State<CreateStrategyScreen> {
         ),
       ])),
     ]),
-    const SizedBox(height: 20),
-    // Cash vs Futures underlying (uTrade feature)
+    const SizedBox(height: 16),
     _Label('Underlying Type'),
-    _Chips(
-      options: const ['Cash', 'Futures'],
-      sel: _optUnderlying,
-      onTap: (v) => setState(() => _optUnderlying = v),
-    ),
-    const SizedBox(height: 8),
-    Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(color: _K.surfaceAlt, borderRadius: BorderRadius.circular(10), border: Border.all(color: _K.divider)),
-      child: Row(children: [
-        Icon(_optUnderlying == 'Cash' ? Icons.currency_rupee_rounded : Icons.candlestick_chart_rounded, size: 14, color: _K.t3),
-        const SizedBox(width: 8),
-        Expanded(child: Text(
-          _optUnderlying == 'Cash'
-              ? 'Options priced on the spot index price'
-              : 'Options priced on the futures contract — used for stock options',
-          style: const TextStyle(fontSize: 11, color: _K.t3, height: 1.4),
-        )),
-      ]),
-    ),
-    const SizedBox(height: 20),
+    _Chips(options: const ['Cash', 'Futures'], sel: _optUnderlying, onTap: (v) => setState(() => _optUnderlying = v)),
+    const SizedBox(height: 16),
     _Label('Strategy Style'),
-    _Chips(
-      options: const ['Buying', 'Selling', 'Spread', 'Hedged'],
-      sel: _style,
-      onTap: (v) => setState(() => _style = v),
-    ),
-    const SizedBox(height: 20),
+    _Chips(options: const ['Buying', 'Selling', 'Spread', 'Hedged'], sel: _style, onTap: (v) => setState(() => _style = v)),
+    const SizedBox(height: 16),
     _Label('Time Frame'),
-    _Chips(
-      options: const ['1m', '3m', '5m', '15m', '1H', '1D'],
-      sel: _tf,
-      onTap: (v) => setState(() => _tf = v),
-    ),
-    const SizedBox(height: 20),
-    // ── Entry Trigger (required by engine) ────────────────────────────────
+    _Chips(options: const ['1m', '3m', '5m', '15m', '1H', '1D'], sel: _tf, onTap: (v) => setState(() => _tf = v)),
+    const SizedBox(height: 16),
     _buildEntryTriggerCard(),
   ];
 
-  // ── Stocks setup fields ────────────────────────────────────────────────────
   List<Widget> _stocksSetupFields() => [
     _Label('Market'),
-    _Chips(
-      options: const ['NSE Equity', 'BSE Equity'],
-      sel: _stockMarket,
-      onTap: (v) => setState(() => _stockMarket = v),
-    ),
-    const SizedBox(height: 20),
+    _Chips(options: const ['NSE Equity', 'BSE Equity'], sel: _stockMarket, onTap: (v) => setState(() => _stockMarket = v)),
+    const SizedBox(height: 16),
     _Label('Stock Symbol'),
     _StockSearchField(
-      value: _stockSymbol,
-      displayName: _stockName,
-      onSelected: (inst) => setState(() {
-        _stockSymbol = inst.symbol;
-        _stockName   = inst.name;
-      }),
+      value: _stockSymbol, displayName: _stockName,
+      onSelected: (inst) => setState(() { _stockSymbol = inst.symbol; _stockName = inst.name; }),
     ),
-    const SizedBox(height: 20),
+    const SizedBox(height: 16),
     _Label('Product Type'),
-    _Chips(
-      options: const ['Intraday', 'Delivery'],
-      sel: _stockProduct,
-      onTap: (v) => setState(() => _stockProduct = v),
-    ),
-    const SizedBox(height: 20),
+    _Chips(options: const ['Intraday', 'Delivery'], sel: _stockProduct, onTap: (v) => setState(() => _stockProduct = v)),
+    const SizedBox(height: 16),
     _Label('Direction'),
-    _Chips(
-      options: const ['Long', 'Short'],
-      sel: _stockStyle,
-      onTap: (v) => setState(() => _stockStyle = v),
-    ),
-    const SizedBox(height: 20),
+    _Chips(options: const ['Long', 'Short'], sel: _stockStyle, onTap: (v) => setState(() => _stockStyle = v)),
+    const SizedBox(height: 16),
     _Label('Time Frame'),
-    _Chips(
-      options: const ['1m', '3m', '5m', '15m', '1H', '1D', '1W'],
-      sel: _stockTf,
-      onTap: (v) => setState(() => _stockTf = v),
-    ),
-    const SizedBox(height: 20),
-    // ── Entry Trigger (required by engine) ────────────────────────────────
+    _Chips(options: const ['1m', '3m', '5m', '15m', '1H', '1D', '1W'], sel: _stockTf, onTap: (v) => setState(() => _stockTf = v)),
+    const SizedBox(height: 16),
     _buildEntryTriggerCard(),
   ];
 
-  // ── Entry Trigger card ─────────────────────────────────────────────────────
-  // The single field the Firebase engine evaluates every minute in market hours.
-  // above / below / at_market  +  an optional ₹ price level.
   Widget _buildEntryTriggerCard() {
     final sym       = _stratType == _StratType.options ? _underlying : _stockSymbol;
     final livePrice = _liveSpot(sym);
-    final hint      = livePrice > 0 ? '${livePrice.toStringAsFixed(0)}' : 'e.g. 24500';
-
+    final hint      = livePrice > 0 ? livePrice.toStringAsFixed(0) : 'e.g. 24500';
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: _K.surface,
-        borderRadius: BorderRadius.circular(16),
+        color: _K.surface, borderRadius: BorderRadius.circular(14),
         border: Border.all(color: _K.primary.withValues(alpha: 0.35), width: 1.5),
         boxShadow: _K.shadow,
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          Container(
-            width: 34, height: 34,
-            decoration: BoxDecoration(color: _K.primaryBg, borderRadius: BorderRadius.circular(10)),
-            child: const Icon(Icons.bolt_rounded, color: _K.primary, size: 18),
-          ),
+          Container(width: 32, height: 32, decoration: BoxDecoration(color: _K.primaryBg, borderRadius: BorderRadius.circular(9)),
+            child: const Icon(Icons.bolt_rounded, color: _K.primary, size: 17)),
           const SizedBox(width: 10),
           const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Entry Trigger', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: _K.t1)),
-            Text('Engine checks this every minute during market hours', style: TextStyle(fontSize: 10, color: _K.t3)),
+            Text('Entry Trigger', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: _K.t1)),
+            Text('Engine checks this every minute', style: TextStyle(fontSize: 10, color: _K.t3)),
           ])),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(
-              color: _K.profit.withValues(alpha: 0.10),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: const Text('REQUIRED', style: TextStyle(fontSize: 9, fontWeight: FontWeight.w800, color: _K.profit, letterSpacing: 0.5)),
-          ),
+          Container(padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+            decoration: BoxDecoration(color: _K.profit.withValues(alpha: 0.10), borderRadius: BorderRadius.circular(6)),
+            child: const Text('REQUIRED', style: TextStyle(fontSize: 9, fontWeight: FontWeight.w800, color: _K.profit, letterSpacing: 0.5))),
         ]),
-        const SizedBox(height: 14),
+        const SizedBox(height: 12),
         Row(children: [
-          Expanded(child: _TriggerTypeBtn(
-            label: '↑ Above', sel: _entryTriggerType == 'above',
-            onTap: () => setState(() => _entryTriggerType = 'above'),
-          )),
+          Expanded(child: _TriggerTypeBtn(label: '↑ Above', sel: _entryTriggerType == 'above', onTap: () => setState(() => _entryTriggerType = 'above'))),
           const SizedBox(width: 8),
-          Expanded(child: _TriggerTypeBtn(
-            label: '↓ Below', sel: _entryTriggerType == 'below',
-            onTap: () => setState(() => _entryTriggerType = 'below'),
-          )),
+          Expanded(child: _TriggerTypeBtn(label: '↓ Below', sel: _entryTriggerType == 'below', onTap: () => setState(() => _entryTriggerType = 'below'))),
           const SizedBox(width: 8),
-          Expanded(child: _TriggerTypeBtn(
-            label: '⚡ Market', sel: _entryTriggerType == 'at_market',
-            onTap: () => setState(() => _entryTriggerType = 'at_market'),
-          )),
+          Expanded(child: _TriggerTypeBtn(label: '⚡ Market', sel: _entryTriggerType == 'at_market', onTap: () => setState(() => _entryTriggerType = 'at_market'))),
         ]),
         if (_entryTriggerType != 'at_market') ...[
           const SizedBox(height: 12),
           _NumField(ctrl: _entryTriggerPriceCtrl, label: 'Trigger Price', hint: hint, prefix: '₹'),
-          const SizedBox(height: 8),
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(color: _K.primaryBg, borderRadius: BorderRadius.circular(10)),
-            child: Row(children: [
-              const Icon(Icons.info_outline_rounded, size: 13, color: _K.primary),
-              const SizedBox(width: 6),
-              Expanded(child: Text(
-                _entryTriggerType == 'above'
-                    ? 'Engine places order when $sym price crosses above ₹${_entryTriggerPriceCtrl.text.isEmpty ? "___" : _entryTriggerPriceCtrl.text}'
-                    : 'Engine places order when $sym price falls below ₹${_entryTriggerPriceCtrl.text.isEmpty ? "___" : _entryTriggerPriceCtrl.text}',
-                style: const TextStyle(fontSize: 11, color: _K.primary, height: 1.4),
-              )),
-            ]),
-          ),
         ] else ...[
           const SizedBox(height: 10),
           Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(color: _K.surfaceAlt, borderRadius: BorderRadius.circular(10)),
             child: const Row(children: [
-              Icon(Icons.flash_on_rounded, size: 13, color: _K.warning),
-              SizedBox(width: 6),
-              Expanded(child: Text(
-                'Engine places a market order immediately when deployed — no price condition.',
-                style: TextStyle(fontSize: 11, color: _K.t2, height: 1.4),
-              )),
+              Icon(Icons.flash_on_rounded, size: 13, color: _K.warning), SizedBox(width: 6),
+              Expanded(child: Text('Market order placed immediately when deployed.', style: TextStyle(fontSize: 11, color: _K.t2, height: 1.4))),
             ]),
           ),
         ],
@@ -1397,175 +1329,111 @@ class _CSS extends State<CreateStrategyScreen> {
   }
 
   // ════════════════════════════════════════════════════════════════════════════
-  // STEP 2 — CONDITIONS
+  // SECTION 2 — CONDITIONS
   // ════════════════════════════════════════════════════════════════════════════
-  Widget _step2() {
+  Widget _conditionsContent() {
     final conds = _conds;
     final isOpt = _stratType == _StratType.options;
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 18, 16, 16),
-      children: [
-        _SegBar(
-          options: const ['Entry', 'Exit', 'Filters'],
-          sel: _condTab,
-          onChanged: (v) => setState(() => _condTab = v),
-        ),
-        const SizedBox(height: 16),
-        // ── Per-condition rows with AND/OR gates between them ───────────────
-        if (conds.isEmpty) ...[
-          _CondEmptyState(
-            condTab: _condTab,
-            onAdd: () => setState(() => conds.add(_Condition())),
-          ),
-        ] else ...[
-          ...List.generate(conds.length, (i) {
-            final isLast = i == conds.length - 1;
-            return Column(children: [
-              _CondRow(
-                index: i, cond: conds[i],
-                isOptions: _stratType == _StratType.options,
-                strategyTf: _stratType == _StratType.options ? _tf : _stockTf,
-                onDelete: conds.length > 1 ? () => setState(() => conds.removeAt(i)) : null,
-                onChanged: (_) => setState(() {}),
-              ),
-              if (!isLast)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 6),
-                  child: Center(
-                    child: GestureDetector(
-                      onTap: () => setState(() {
-                        conds[i].logic = conds[i].logic == 'AND' ? 'OR' : 'AND';
-                      }),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
-                        decoration: BoxDecoration(
-                          color: conds[i].logic == 'AND' ? _K.primary : _K.warning,
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Text(
-                          conds[i].logic,
-                          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: 0.5),
-                        ),
-                      ),
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      _SegBar(options: const ['Entry', 'Exit', 'Filters'], sel: _condTab, onChanged: (v) => setState(() => _condTab = v)),
+      const SizedBox(height: 14),
+      if (conds.isEmpty)
+        _CondEmptyState(condTab: _condTab, onAdd: () => setState(() => conds.add(_Condition())))
+      else ...[
+        ...List.generate(conds.length, (i) {
+          final isLast = i == conds.length - 1;
+          return Column(children: [
+            _CondRow(
+              index: i, cond: conds[i],
+              isOptions: _stratType == _StratType.options,
+              strategyTf: _stratType == _StratType.options ? _tf : _stockTf,
+              onDelete: conds.length > 1 ? () => setState(() => conds.removeAt(i)) : null,
+              onChanged: (_) => setState(() {}),
+            ),
+            if (!isLast)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Center(
+                  child: GestureDetector(
+                    onTap: () => setState(() { conds[i].logic = conds[i].logic == 'AND' ? 'OR' : 'AND'; }),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+                      decoration: BoxDecoration(color: conds[i].logic == 'AND' ? _K.primary : _K.warning, borderRadius: BorderRadius.circular(20)),
+                      child: Text(conds[i].logic, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: 0.5)),
                     ),
                   ),
                 ),
-            ]);
-          }),
-          const SizedBox(height: 10),
-          GestureDetector(
-            onTap: () => setState(() => conds.add(_Condition())),
-            child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              decoration: BoxDecoration(
-                color: _K.primaryBg, borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: _K.primary.withValues(alpha: 0.3)),
               ),
-              child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                Icon(Icons.add_circle_rounded, color: _K.primary, size: 18),
-                SizedBox(width: 6),
-                Text('Add Condition', style: TextStyle(color: _K.primary, fontWeight: FontWeight.w700, fontSize: 13)),
-              ]),
-            ),
+          ]);
+        }),
+        const SizedBox(height: 10),
+        GestureDetector(
+          onTap: () => setState(() => conds.add(_Condition())),
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            decoration: BoxDecoration(color: _K.primaryBg, borderRadius: BorderRadius.circular(12), border: Border.all(color: _K.primary.withValues(alpha: 0.3))),
+            child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Icon(Icons.add_circle_rounded, color: _K.primary, size: 18), SizedBox(width: 6),
+              Text('Add Condition', style: TextStyle(color: _K.primary, fontWeight: FontWeight.w700, fontSize: 13)),
+            ]),
           ),
-        ],
-        if (isOpt) ...[
-          const SizedBox(height: 20),
-          _AdvPanel(
-            selected: _advSel, expanded: _advExp,
-            onToggleExpand: () => setState(() => _advExp = !_advExp),
-            onToggleOpt: (o) => setState(() {
-              if (_advSel.contains(o)) _advSel.remove(o); else _advSel.add(o);
-            }),
-          ),
-        ],
+        ),
       ],
-    );
+      if (isOpt) ...[
+        const SizedBox(height: 16),
+        _AdvPanel(
+          selected: _advSel, expanded: _advExp,
+          onToggleExpand: () => setState(() => _advExp = !_advExp),
+          onToggleOpt: (o) => setState(() { if (_advSel.contains(o)) _advSel.remove(o); else _advSel.add(o); }),
+        ),
+      ],
+    ]);
   }
 
   // ════════════════════════════════════════════════════════════════════════════
-  // STEP 3 — LEGS (Options) or POSITION (Stocks)
+  // SECTION 3 — LEGS (Options)
   // ════════════════════════════════════════════════════════════════════════════
-  Widget _step3() => _stratType == _StratType.options ? _step3Options() : _step3Stocks();
+  Widget _legsContent2() {
+    final spot    = _liveSpot(_underlying);
+    final lotSize = _kLotSizes[_underlying] ?? 50.0;
 
-  // ── Options: Legs & Payoff ─────────────────────────────────────────────────
-  Widget _step3Options() => ListView(
-    padding: const EdgeInsets.fromLTRB(16, 18, 16, 16),
-    children: [
-      _SegBar(
-        options: const ['Strategy Legs', 'Payoff'],
-        sel: _legsTab,
-        onChanged: (v) => setState(() => _legsTab = v),
-      ),
-      const SizedBox(height: 16),
-      if (_legsTab == 'Strategy Legs') ..._legsContent(),
-      if (_legsTab == 'Payoff')        _payoffContent(),
-    ],
-  );
-
-  List<Widget> _legsContent() => [
-    Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-      const Text('Option Legs', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _K.t1)),
-      GestureDetector(
-        onTap: () => setState(() => _legs.add(_Leg(useSetupExpiry: true, expiry: _expiry))),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-          decoration: BoxDecoration(color: _K.primaryBg, borderRadius: BorderRadius.circular(20), border: Border.all(color: _K.primary.withValues(alpha: 0.3))),
-          child: const Row(children: [
-            Icon(Icons.add_circle_rounded, color: _K.primary, size: 16),
-            SizedBox(width: 4),
-            Text('Add Leg', style: TextStyle(color: _K.primary, fontWeight: FontWeight.w700, fontSize: 12)),
-          ]),
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      // Legs tab bar: Legs | Payoff
+      _SegBar(options: const ['Strategy Legs', 'Payoff'], sel: _legsTab, onChanged: (v) => setState(() => _legsTab = v)),
+      const SizedBox(height: 14),
+      if (_legsTab == 'Strategy Legs') ...[
+        ...List.generate(_legs.length, (i) => _LegCard(
+          index: i, leg: _legs[i], underlying: _underlying, setupExpiry: _expiry,
+          onDelete: _legs.length > 1 ? () => setState(() => _legs.removeAt(i)) : null,
+          onChanged: (_) => setState(() {}),
+        )),
+        const SizedBox(height: 8),
+        GestureDetector(
+          onTap: () => setState(() => _legs.add(_Leg(useSetupExpiry: true, expiry: _expiry))),
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            decoration: _K.card(),
+            child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Icon(Icons.add_circle_outline_rounded, color: _K.primary, size: 18), SizedBox(width: 8),
+              Text('Add Leg', style: TextStyle(color: _K.primary, fontWeight: FontWeight.w700, fontSize: 13)),
+            ]),
+          ),
         ),
-      ),
-    ]),
-    const SizedBox(height: 14),
-    ...List.generate(_legs.length, (i) => _LegCard(
-      index: i, leg: _legs[i], underlying: _underlying, setupExpiry: _expiry,
-      onDelete: _legs.length > 1 ? () => setState(() => _legs.removeAt(i)) : null,
-      onChanged: (_) => setState(() {}),
-    )),
-    const SizedBox(height: 10),
-    GestureDetector(
-      onTap: () => setState(() => _legs.add(_Leg(useSetupExpiry: true, expiry: _expiry))),
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 14),
-        decoration: _K.card(),
-        child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Icon(Icons.add_circle_outline_rounded, color: _K.primary, size: 18),
-          SizedBox(width: 8),
-          Text('Add Another Leg', style: TextStyle(color: _K.primary, fontWeight: FontWeight.w700, fontSize: 13)),
-        ]),
-      ),
-    ),
-    const SizedBox(height: 20),
-    _Label('Order Type'),
-    _Drop(value: _orderType, items: const ['Market Order', 'Limit Order', 'SL Order', 'SL-M Order'], onChanged: (v) => setState(() => _orderType = v!)),
-    const SizedBox(height: 20),
-    _Label('Position Sizing'),
-    _Chips(
-      options: const ['Fixed Lots', '% of Capital'],
-      sel: _posSizing,
-      onTap: (v) => setState(() => _posSizing = v),
-    ),
-    const SizedBox(height: 12),
-    _PositionSizingInputs(
-      mode: _posSizing,
-      lotsCtrl: _lotsCtrl, capitalCtrl: _capitalCtrl, pctCapCtrl: _pctCapCtrl,
-      lotSize: _kLotSizes[_underlying] ?? 50, underlying: _underlying,
-    ),
-    const SizedBox(height: 16),
-    // ── Margin Estimate (uTrade feature) ──────────────────────────────────────
-    _MarginEstimate(
-      legs: _legs,
-      underlying: _underlying,
-      lots: int.tryParse(_lotsCtrl.text) ?? 1,
-      lotSize: _kLotSizes[_underlying] ?? 50,
-      spotPrice: _liveSpot(_underlying),
-    ),
-  ];
+        const SizedBox(height: 16),
+        _Label('Order Type'),
+        _Drop(value: _orderType, items: const ['Market Order', 'Limit Order', 'SL Order', 'SL-M Order'], onChanged: (v) => setState(() => _orderType = v!)),
+        const SizedBox(height: 16),
+        _Label('Position Sizing'),
+        _Chips(options: const ['Fixed Lots', '% of Capital'], sel: _posSizing, onTap: (v) => setState(() => _posSizing = v)),
+        const SizedBox(height: 12),
+        _PositionSizingInputs(mode: _posSizing, lotsCtrl: _lotsCtrl, capitalCtrl: _capitalCtrl, pctCapCtrl: _pctCapCtrl, lotSize: _kLotSizes[_underlying] ?? 50, underlying: _underlying),
+        const SizedBox(height: 14),
+        _MarginEstimate(legs: _legs, underlying: _underlying, lots: int.tryParse(_lotsCtrl.text) ?? 1, lotSize: lotSize, spotPrice: spot),
+      ],
+      if (_legsTab == 'Payoff') _payoffContent(),
+    ]);
+  }
 
-  // ── Payoff diagram ─────────────────────────────────────────────────────────
   Widget _payoffContent() {
     final spot    = _liveSpot(_underlying);
     final lotSize = _kLotSizes[_underlying] ?? 50.0;
@@ -1573,43 +1441,31 @@ class _CSS extends State<CreateStrategyScreen> {
     final maxPnl  = pts.map((p) => p.pnl).reduce(math.max);
     final minPnl  = pts.map((p) => p.pnl).reduce(math.min);
     final range   = (maxPnl - minPnl).abs().clamp(1.0, double.infinity);
-
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Row(children: [
         _PayoffMetric(label: 'Max Profit', value: maxPnl >= 1e9 ? 'Unlimited' : '₹${_fmt(maxPnl)}', color: maxPnl >= 0 ? _K.profit : _K.loss),
         const SizedBox(width: 12),
-        _PayoffMetric(label: 'Max Loss',   value: minPnl <= -1e9 ? 'Unlimited' : '₹${_fmt(minPnl)}', color: minPnl < 0 ? _K.loss : _K.profit),
+        _PayoffMetric(label: 'Max Loss', value: minPnl <= -1e9 ? 'Unlimited' : '₹${_fmt(minPnl)}', color: minPnl < 0 ? _K.loss : _K.profit),
       ]),
       const SizedBox(height: 16),
-      Container(
-        height: 200, padding: const EdgeInsets.all(16), decoration: _K.card(),
-        child: CustomPaint(
-          painter: _PayoffPainter(points: pts, minPnl: minPnl, range: range),
-          child: const SizedBox.expand(),
-        ),
-      ),
+      Container(height: 200, padding: const EdgeInsets.all(16), decoration: _K.card(),
+        child: CustomPaint(painter: _PayoffPainter(points: pts, minPnl: minPnl, range: range), child: const SizedBox.expand())),
       const SizedBox(height: 8),
       Center(child: Text('Spot range: ₹${_fmt(pts.first.spot)} – ₹${_fmt(pts.last.spot)}', style: const TextStyle(fontSize: 11, color: _K.t3))),
       const SizedBox(height: 16),
       ...List.generate(_legs.length, (i) {
-        final l = _legs[i];
-        final g = _Greeks.estimate(l, _underlying);
+        final l = _legs[i]; final g = _Greeks.estimate(l, _underlying);
         return Container(
           margin: const EdgeInsets.only(bottom: 8),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: _K.card(),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10), decoration: _K.card(),
           child: Row(children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(color: l.side == 'Buy' ? _K.profitBg : _K.lossBg, borderRadius: BorderRadius.circular(6)),
-              child: Text(l.side, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: l.side == 'Buy' ? _K.profit : _K.loss)),
-            ),
+              child: Text(l.side, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: l.side == 'Buy' ? _K.profit : _K.loss))),
             const SizedBox(width: 8),
             Expanded(child: Text('Leg ${i+1}: ${l.optType} ${l.strikeLabel}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _K.t1))),
-            _GreekChip(label: 'Δ', value: g.delta.toStringAsFixed(2)),
-            const SizedBox(width: 4),
-            _GreekChip(label: 'θ', value: g.theta.toStringAsFixed(1)),
-            const SizedBox(width: 4),
+            _GreekChip(label: 'Δ', value: g.delta.toStringAsFixed(2)), const SizedBox(width: 4),
+            _GreekChip(label: 'θ', value: g.theta.toStringAsFixed(1)), const SizedBox(width: 4),
             _GreekChip(label: 'IV', value: '${g.iv.toStringAsFixed(1)}%'),
           ]),
         );
@@ -1617,498 +1473,188 @@ class _CSS extends State<CreateStrategyScreen> {
     ]);
   }
 
-  // ── Stocks: Position config ────────────────────────────────────────────────
-  Widget _step3Stocks() => ListView(
-    padding: const EdgeInsets.fromLTRB(16, 18, 16, 16),
-    children: [
-      // Symbol summary
-      Container(
-        padding: const EdgeInsets.all(16), decoration: _K.card(border: _K.primary.withValues(alpha: 0.2)),
-        child: Row(children: [
-          Container(
-            width: 44, height: 44,
-            decoration: BoxDecoration(color: _K.primaryBg, borderRadius: BorderRadius.circular(12)),
-            child: const Center(child: Icon(Icons.bar_chart_rounded, color: _K.primary, size: 22)),
-          ),
-          const SizedBox(width: 14),
-          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(_stockSymbol.isEmpty ? 'No symbol selected' : _stockSymbol,
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: _K.t1)),
-            Text(
-              _stockName.isNotEmpty ? _stockName : '$_stockMarket  ·  $_stockProduct',
-              style: const TextStyle(fontSize: 12, color: _K.t3),
-            ),
-          ]),
-          const Spacer(),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            decoration: BoxDecoration(
-              color: _stockStyle == 'Long' ? _K.profitBg : _K.lossBg,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Text(
-              _stockStyle == 'Long' ? '↑ Long' : '↓ Short',
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: _stockStyle == 'Long' ? _K.profit : _K.loss),
-            ),
-          ),
-        ]),
-      ),
-      const SizedBox(height: 20),
-      _Label('Order Type'),
-      _Drop(value: _orderType, items: const ['Market Order', 'Limit Order', 'SL Order', 'SL-M Order'], onChanged: (v) => setState(() => _orderType = v!)),
-      const SizedBox(height: 20),
-      _Label('Position Sizing'),
-      _Chips(
-        options: const ['Fixed Shares', '% of Capital'],
-        sel: _stockSizing,
-        onTap: (v) => setState(() => _stockSizing = v),
-      ),
-      const SizedBox(height: 12),
-      _StockPositionSizingInputs(
-        mode: _stockSizing,
-        sharesCtrl: _sharesCtrl,
-        capitalCtrl: _capitalCtrl,
-        pctCapCtrl: _pctCapCtrl,
-        symbol: _stockSymbol,
-      ),
-    ],
-  );
-
   // ════════════════════════════════════════════════════════════════════════════
-  // STEP 4 — RISK & EXIT
+  // SECTION 3 — POSITION (Stocks)
   // ════════════════════════════════════════════════════════════════════════════
-  Widget _step4() => ListView(
-    padding: const EdgeInsets.fromLTRB(16, 18, 16, 16),
-    children: [_riskContent()],
-  );
-
-  Widget _riskContent() => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+  Widget _stockPositionContent() => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
     Container(
-      padding: const EdgeInsets.all(16), decoration: _K.card(),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Row(children: [
-          Icon(Icons.shield_outlined, color: _K.loss, size: 18), SizedBox(width: 8),
-          Text('Stop Loss', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: _K.t1)),
-        ]),
-        const SizedBox(height: 14),
-        Row(children: [
-          Expanded(child: _NumField(ctrl: _slCtrl, label: 'SL %', hint: 'e.g. 50', suffix: '%')),
-          const SizedBox(width: 12),
-          Expanded(child: _NumField(ctrl: _maxLossCtrl, label: 'Max Loss', hint: 'e.g. 5000', prefix: '₹')),
-        ]),
-        const SizedBox(height: 14),
-        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Trailing Stop Loss', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: _K.t1)),
-            SizedBox(height: 2),
-            Text('SL shifts as trade moves in your favour', style: TextStyle(fontSize: 11, color: _K.t3)),
-          ]),
-          Switch(value: _trailSl, onChanged: (v) => setState(() => _trailSl = v), activeColor: _K.primary),
-        ]),
-      ]),
-    ),
-    const SizedBox(height: 14),
-    Container(
-      padding: const EdgeInsets.all(16),
-      decoration: _K.card(border: _paperTrade ? const Color(0xFFD97706).withValues(alpha: 0.4) : null),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              Text('🧪 ', style: TextStyle(fontSize: 16)),
-              Text('Paper Trade', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: _K.t1)),
-            ]),
-            SizedBox(height: 2),
-            Text('Simulate without placing a real order', style: TextStyle(fontSize: 11, color: _K.t3)),
-          ]),
-          Switch(value: _paperTrade, onChanged: (v) => setState(() => _paperTrade = v), activeColor: Color(0xFFD97706)),
-        ]),
-        if (_paperTrade) ...[
-          const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(color: const Color(0xFFFFFBEB), borderRadius: BorderRadius.circular(10), border: Border.all(color: const Color(0xFFFDE68A))),
-            child: const Row(children: [
-              Icon(Icons.info_outline_rounded, size: 14, color: Color(0xFFD97706)),
-              SizedBox(width: 8),
-              Expanded(child: Text(
-                'No real order will be placed. The engine will simulate the full lifecycle using live prices — but no money moves.',
-                style: TextStyle(fontSize: 11, color: Color(0xFFD97706), height: 1.4),
-              )),
-            ]),
-          ),
-        ],
-      ]),
-    ),
-    const SizedBox(height: 14),
-    // ── Target / Take Profit + Locked Profit ──────────────────────────────────
-    Container(
-      padding: const EdgeInsets.all(16), decoration: _K.card(),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Row(children: [
-          Icon(Icons.flag_rounded, color: _K.profit, size: 18), SizedBox(width: 8),
-          Text('Target / Take Profit', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: _K.t1)),
-        ]),
-        const SizedBox(height: 14),
-        _NumField(ctrl: _tgtCtrl, label: 'Target %', hint: 'e.g. 100', suffix: '%'),
-        const SizedBox(height: 14),
-        Divider(height: 1, color: _K.divider),
-        const SizedBox(height: 14),
-        // Locked profit — uTrade feature
-        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Locked Profit', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: _K.t1)),
-            SizedBox(height: 2),
-            Text('Lock a floor profit once a threshold is hit', style: TextStyle(fontSize: 11, color: _K.t3)),
-          ]),
-          Switch(
-            value: _lockedProfitCtrl.text.isNotEmpty || _lockAtCtrl.text.isNotEmpty,
-            onChanged: (v) => setState(() {
-              if (!v) { _lockedProfitCtrl.clear(); _lockAtCtrl.clear(); }
-            }),
-            activeColor: _K.profit,
-          ),
-        ]),
-        const SizedBox(height: 12),
-        Row(children: [
-          Expanded(child: _NumField(ctrl: _lockAtCtrl,       label: 'Profit hits ₹',  hint: 'e.g. 6000', prefix: '₹')),
-          const SizedBox(width: 12),
-          Expanded(child: _NumField(ctrl: _lockedProfitCtrl, label: 'Lock minimum ₹', hint: 'e.g. 3000', prefix: '₹')),
-        ]),
-        const SizedBox(height: 8),
+      padding: const EdgeInsets.all(14), decoration: _K.card(border: _K.primary.withValues(alpha: 0.2)),
+      child: Row(children: [
+        Container(width: 40, height: 40, decoration: BoxDecoration(color: _K.primaryBg, borderRadius: BorderRadius.circular(10)),
+          child: const Center(child: Icon(Icons.bar_chart_rounded, color: _K.primary, size: 20))),
+        const SizedBox(width: 12),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(_stockSymbol.isEmpty ? 'No symbol selected' : _stockSymbol, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _K.t1)),
+          Text(_stockName.isNotEmpty ? _stockName : '$_stockMarket · $_stockProduct', style: const TextStyle(fontSize: 11, color: _K.t3)),
+        ])),
         Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(color: _K.profitBg.withValues(alpha: 0.5), borderRadius: BorderRadius.circular(10)),
-          child: const Row(children: [
-            Icon(Icons.lock_rounded, size: 13, color: _K.profit),
-            SizedBox(width: 6),
-            Expanded(child: Text(
-              'Once profit ≥ "Profit hits", the strategy locks in the "Lock minimum" and cannot go below it.',
-              style: TextStyle(fontSize: 10, color: _K.profit, height: 1.4),
-            )),
-          ]),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(color: _stockStyle == 'Long' ? _K.profitBg : _K.lossBg, borderRadius: BorderRadius.circular(8)),
+          child: Text(_stockStyle == 'Long' ? '↑ Long' : '↓ Short', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: _stockStyle == 'Long' ? _K.profit : _K.loss)),
         ),
       ]),
     ),
-    const SizedBox(height: 14),
-    // ── Time-based Exit ────────────────────────────────────────────────────────
-    Container(
-      padding: const EdgeInsets.all(16), decoration: _K.card(),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Row(children: [
-          Icon(Icons.schedule_rounded, color: _K.warning, size: 18), SizedBox(width: 8),
-          Text('Time-based Exit', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: _K.t1)),
-        ]),
-        const SizedBox(height: 14),
-        _Drop(
-          value: _timeExit,
-          items: const ['Square off at 3:15 PM', 'Square off at 3:00 PM', 'Square off at 2:30 PM', 'No time-based exit'],
-          onChanged: (v) => setState(() => _timeExit = v!),
-        ),
-      ]),
-    ),
-    const SizedBox(height: 14),
-    // ── Trading Schedule (uTrade: start/end time + weekdays) ────────────────
-    Container(
-      padding: const EdgeInsets.all(16), decoration: _K.card(),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Row(children: [
-          Icon(Icons.calendar_today_rounded, color: _K.primary, size: 18), SizedBox(width: 8),
-          Text('Trading Schedule', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: _K.t1)),
-        ]),
-        const SizedBox(height: 6),
-        const Text('Control when the algo looks for entries', style: TextStyle(fontSize: 11, color: _K.t3)),
-        const SizedBox(height: 14),
-        Row(children: [
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Text('Start Time', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: _K.t3)),
-            const SizedBox(height: 4),
-            _MiniDrop(
-              value: _startTime,
-              items: const ['09:15 AM', '09:20 AM', '09:30 AM', '10:00 AM', '10:30 AM', '11:00 AM'],
-              onChanged: (v) => setState(() => _startTime = v!),
-            ),
-          ])),
-          const SizedBox(width: 12),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Text('End Time (last entry)', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: _K.t3)),
-            const SizedBox(height: 4),
-            _MiniDrop(
-              value: _endTime,
-              items: const ['01:00 PM', '02:00 PM', '02:30 PM', '03:00 PM', '03:15 PM'],
-              onChanged: (v) => setState(() => _endTime = v!),
-            ),
-          ])),
-        ]),
-        const SizedBox(height: 14),
-        const Text('Trading Days', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: _K.t3)),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8, runSpacing: 8,
-          children: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].map((day) {
-            final sel = _tradingDays.contains(day);
-            return GestureDetector(
-              onTap: () => setState(() {
-                if (sel) { if (_tradingDays.length > 1) _tradingDays.remove(day); }
-                else _tradingDays.add(day);
-              }),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 120),
-                width: 48, height: 36,
-                decoration: BoxDecoration(
-                  color: sel ? _K.primary : _K.surfaceAlt,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: sel ? _K.primary : _K.divider),
-                ),
-                child: Center(child: Text(day, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: sel ? Colors.white : _K.t2))),
-              ),
-            );
-          }).toList(),
-        ),
-      ]),
-    ),
-    const SizedBox(height: 14),
-    // ── Re-entry / Re-order (uTrade feature) ──────────────────────────────────
-    Container(
-      padding: const EdgeInsets.all(16),
-      decoration: _K.card(border: _reEntry ? _K.primary.withValues(alpha: 0.3) : null),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              Icon(Icons.replay_rounded, color: _K.primary, size: 16),
-              SizedBox(width: 8),
-              Text('Re-entry After Exit', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: _K.t1)),
-            ]),
-            SizedBox(height: 2),
-            Text('Re-enter after a stop-loss or target hit', style: TextStyle(fontSize: 11, color: _K.t3)),
-          ]),
-          Switch(value: _reEntry, onChanged: (v) => setState(() => _reEntry = v), activeColor: _K.primary),
-        ]),
-        if (_reEntry) ...[
-          const SizedBox(height: 14),
-          Divider(height: 1, color: _K.divider),
-          const SizedBox(height: 14),
-          const Text('Re-entry Mode', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: _K.t3)),
-          const SizedBox(height: 8),
-          _Chips(
-            options: const ['Time-based', 'Signal-based'],
-            sel: _reEntryMode,
-            onTap: (v) => setState(() => _reEntryMode = v),
-          ),
-          const SizedBox(height: 12),
-          if (_reEntryMode == 'Time-based') ...[
-            Row(children: [
-              const Text('Wait (minutes) before re-entering', style: TextStyle(fontSize: 11, color: _K.t3)),
-              const Spacer(),
-              SizedBox(width: 70, child: _MiniField(
-                hint: '30',
-                initial: _reEntryWait,
-                onChanged: (v) => setState(() => _reEntryWait = v),
-              )),
-            ]),
-          ] else ...[
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(color: _K.primaryBg, borderRadius: BorderRadius.circular(10)),
-              child: const Row(children: [
-                Icon(Icons.info_outline_rounded, size: 13, color: _K.primary), SizedBox(width: 6),
-                Expanded(child: Text('Re-entry will trigger when your entry conditions are met again after exit.', style: TextStyle(fontSize: 11, color: _K.primary, height: 1.4))),
-              ]),
-            ),
-          ],
-        ],
-      ]),
-    ),
+    const SizedBox(height: 16),
+    _Label('Order Type'),
+    _Drop(value: _orderType, items: const ['Market Order', 'Limit Order', 'SL Order', 'SL-M Order'], onChanged: (v) => setState(() => _orderType = v!)),
+    const SizedBox(height: 16),
+    _Label('Position Sizing'),
+    _Chips(options: const ['Fixed Shares', '% of Capital'], sel: _stockSizing, onTap: (v) => setState(() => _stockSizing = v)),
+    const SizedBox(height: 12),
+    _StockPositionSizingInputs(mode: _stockSizing, sharesCtrl: _sharesCtrl, capitalCtrl: _capitalCtrl, pctCapCtrl: _pctCapCtrl, symbol: _stockSymbol),
   ]);
 
   // ════════════════════════════════════════════════════════════════════════════
-  // STEP 5 — REVIEW
+  // SECTION 4 — RISK & EXIT
   // ════════════════════════════════════════════════════════════════════════════
-  Widget _step5() => ListView(
-    padding: const EdgeInsets.fromLTRB(16, 18, 16, 16),
-    children: [_reviewContent()],
-  );
-
-  Widget _reviewContent() {
-    final isOpt = _stratType == _StratType.options;
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      // Strategy summary card
-      Container(
-        padding: const EdgeInsets.all(16),
-        decoration: _K.card(border: _K.primary.withValues(alpha: 0.25)),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-              decoration: BoxDecoration(
-                color: isOpt ? _K.primaryBg : _K.profitBg,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                isOpt ? 'OPTIONS' : 'STOCKS',
-                style: TextStyle(fontSize: 9, fontWeight: FontWeight.w800, color: isOpt ? _K.primary : _K.profit, letterSpacing: 0.8),
-              ),
-            ),
-            const Spacer(),
-            GestureDetector(onTap: () => _goto(0), child: const Text('Edit', style: TextStyle(fontSize: 12, color: _K.primary, fontWeight: FontWeight.w700))),
-            const SizedBox(width: 12),
-            GestureDetector(
-              onTap: _saving ? null : _cloneStrategy,
-              child: const Row(children: [
-                Icon(Icons.copy_rounded, size: 14, color: _K.t2),
-                SizedBox(width: 4),
-                Text('Clone', style: TextStyle(fontSize: 12, color: _K.t2, fontWeight: FontWeight.w700)),
-              ]),
-            ),
-          ]),
-          const SizedBox(height: 10),
-          Text(
-            _nameCtrl.text.trim().isEmpty ? 'Unnamed Strategy' : _nameCtrl.text.trim(),
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: _K.t1),
-          ),
-          const SizedBox(height: 10),
-          Wrap(spacing: 8, runSpacing: 6, children: [
-            _RChip(label: isOpt ? _market : _stockMarket, color: _K.primary),
-            _RChip(label: isOpt ? _underlying : _stockSymbol.isEmpty ? '—' : _stockSymbol, color: _K.t2),
-            if (isOpt)  _RChip(label: _expiry,       color: _K.t2),
-            if (!isOpt) _RChip(label: _stockProduct,  color: _K.t2),
-            _RChip(label: isOpt ? _style : _stockStyle, color: _K.profit),
-            _RChip(label: isOpt ? _tf : _stockTf,    color: _K.t2),
-          ]),
-        ]),
-      ),
-      const SizedBox(height: 14),
-      // Entry conditions
-      _RevSec(
-        title: 'Entry Conditions (${_entryConds.length})', onEdit: () => _goto(1),
-        child: Column(children: _entryConds.asMap().entries.map((e) {
-          final c = e.value;
-          final lhsLabel = c.lhsType == 'Price'
-              ? c.lhsPrice
-              : () {
-                  final p = [c.paramA, c.paramB, c.paramC].where((s) => s.isNotEmpty).join(', ');
-                  return '${c.indicator}${p.isNotEmpty ? "($p)" : ""}';
-                }();
-          final rhsLabel = c.rhsIsInd
-              ? '${c.valueB}${c.paramC2.isNotEmpty ? "(${c.paramC2})" : ""}'
-              : c.valueA;
-          final candleHint = c.candleSrc != 'Current Candle' ? '  [${c.candleSrc}]' : '';
-          final tfHint     = c.timeframe.isNotEmpty ? '  @${c.timeframe}' : '';
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: Row(children: [
-              Container(
-                width: 22, height: 22,
-                decoration: BoxDecoration(color: _K.primaryBg, borderRadius: BorderRadius.circular(6)),
-                child: Center(child: Text('${e.key+1}', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: _K.primary))),
-              ),
-              const SizedBox(width: 10),
-              Expanded(child: Text(
-                '$lhsLabel  ${c.op}  $rhsLabel$candleHint$tfHint',
-                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _K.t1),
-              )),
-              if (e.key < _entryConds.length - 1)
-                Container(
-                  margin: const EdgeInsets.only(left: 8),
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: c.logic == 'AND' ? _K.primaryBg : _K.lossBg,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(c.logic, style: TextStyle(fontSize: 9, fontWeight: FontWeight.w800, color: c.logic == 'AND' ? _K.primary : _K.warning)),
-                ),
-            ]),
-          );
-        }).toList()),
-      ),
-      const SizedBox(height: 14),
-      // Legs (options) or position (stocks)
-      if (isOpt)
-        _RevSec(
-          title: 'Option Legs (${_legs.length})', onEdit: () => _goto(2),
-          child: Column(children: _legs.asMap().entries.map((e) {
-            final l = e.value; final isBuy = l.side == 'Buy';
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Row(children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(color: isBuy ? _K.profitBg : _K.lossBg, borderRadius: BorderRadius.circular(6)),
-                  child: Text(l.side, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: isBuy ? _K.profit : _K.loss)),
-                ),
-                const SizedBox(width: 10),
-                Expanded(child: Text(
-                  '${l.optType}  ·  Qty ${l.qty}  ·  ${l.strikeLabel}  ·  ${l.useSetupExpiry ? _expiry : l.expiry}',
-                  style: const TextStyle(fontSize: 12, color: _K.t2),
-                )),
-              ]),
-            );
-          }).toList()),
-        )
-      else
-        _RevSec(
-          title: 'Position', onEdit: () => _goto(2),
-          child: Column(children: [
-            _RevRow(label: 'Symbol',    value: _stockSymbol.isEmpty ? '—' : _stockSymbol),
-            if (_stockName.isNotEmpty) _RevRow(label: 'Company',   value: _stockName),
-            _RevRow(label: 'Direction', value: _stockStyle),
-            _RevRow(label: 'Sizing',   value: _stockSizing == 'Fixed Shares' ? '${_sharesCtrl.text} shares' : '${_pctCapCtrl.text}% of capital'),
+  Widget _riskContent() => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    // SL + Target side by side at the top — QuantMan style
+    Row(children: [
+      Expanded(child: _NumField(ctrl: _slCtrl,  label: 'Stop Loss %',  hint: 'e.g. 50',  suffix: '%')),
+      const SizedBox(width: 12),
+      Expanded(child: _NumField(ctrl: _tgtCtrl, label: 'Target %',     hint: 'e.g. 100', suffix: '%')),
+    ]),
+    const SizedBox(height: 12),
+    Row(children: [
+      Expanded(child: _NumField(ctrl: _maxLossCtrl, label: 'Max Loss ₹', hint: 'e.g. 5000', prefix: '₹')),
+      const SizedBox(width: 12),
+      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text('Trailing SL', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: _K.t3)),
+        const SizedBox(height: 4),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(color: _K.surfaceAlt, borderRadius: BorderRadius.circular(10), border: Border.all(color: _K.divider)),
+          child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            const Text('Enabled', style: TextStyle(fontSize: 12, color: _K.t2)),
+            SizedBox(height: 20, child: Switch.adaptive(value: _trailSl, onChanged: (v) => setState(() => _trailSl = v), activeColor: _K.primary)),
           ]),
         ),
-      const SizedBox(height: 14),
-      _RevSec(
-        title: 'Risk & Exit', onEdit: () => _goto(3),
-        child: Column(children: [
-          if (_slCtrl.text.isNotEmpty)      _RevRow(label: 'Stop Loss',     value: '${_slCtrl.text}%'),
-          if (_tgtCtrl.text.isNotEmpty)     _RevRow(label: 'Target',        value: '${_tgtCtrl.text}%'),
-          if (_maxLossCtrl.text.isNotEmpty) _RevRow(label: 'Max Loss',      value: '₹${_maxLossCtrl.text}'),
-          if (_lockAtCtrl.text.isNotEmpty)  _RevRow(label: 'Locked Profit', value: 'Lock ₹${_lockedProfitCtrl.text} once ₹${_lockAtCtrl.text} hit'),
-          _RevRow(label: 'Trailing SL',   value: _trailSl ? 'Enabled' : 'Disabled'),
-          _RevRow(label: 'Schedule',      value: '$_startTime – $_endTime  ·  ${_tradingDays.join(", ")}'),
-          if (_reEntry) _RevRow(label: 'Re-entry', value: _reEntryMode == 'Time-based' ? 'After ${_reEntryWait}m' : 'On signal'),
-          _RevRow(label: 'Paper Trade',   value: _paperTrade ? '🧪 Enabled' : 'Disabled'),
-          _RevRow(label: 'Order Type',    value: _orderType),
-          _RevRow(label: 'Time Exit',     value: _timeExit),
-        ]),
+      ])),
+    ]),
+    const SizedBox(height: 16),
+    Divider(color: _K.divider),
+    const SizedBox(height: 12),
+    // Locked profit
+    Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+      const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('Locked Profit', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: _K.t1)),
+        SizedBox(height: 2),
+        Text('Lock a floor once a profit threshold is hit', style: TextStyle(fontSize: 11, color: _K.t3)),
+      ]),
+      Switch(
+        value: _lockedProfitCtrl.text.isNotEmpty || _lockAtCtrl.text.isNotEmpty,
+        onChanged: (v) => setState(() { if (!v) { _lockedProfitCtrl.clear(); _lockAtCtrl.clear(); } }),
+        activeColor: _K.profit,
       ),
-      const SizedBox(height: 20),
-      // ── Backtest date range selector ────────────────────────────────────────
-      Container(
-        padding: const EdgeInsets.all(14),
-        decoration: _K.card(border: _K.primary.withValues(alpha: 0.15)),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Row(children: [
-            Icon(Icons.date_range_rounded, color: _K.primary, size: 16),
-            SizedBox(width: 8),
-            Text('Backtest Period', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: _K.t1)),
-          ]),
-          const SizedBox(height: 10),
-          Wrap(spacing: 8, runSpacing: 8, children: [
-            '1 Month', '3 Months', '6 Months', '1 Year', '2 Years',
-          ].map((r) {
-            final sel = _btRange == r;
-            return GestureDetector(
-              onTap: () => setState(() { _btRange = r; _btResult = null; }),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 120),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-                decoration: BoxDecoration(
-                  color: sel ? _K.primary : _K.surfaceAlt,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: sel ? _K.primary : _K.divider),
-                ),
-                child: Text(r, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: sel ? Colors.white : _K.t2)),
-              ),
-            );
-          }).toList()),
-        ]),
-      ),
+    ]),
+    if (_lockedProfitCtrl.text.isNotEmpty || _lockAtCtrl.text.isNotEmpty) ...[
+      const SizedBox(height: 10),
+      Row(children: [
+        Expanded(child: _NumField(ctrl: _lockAtCtrl,       label: 'Profit hits ₹',  hint: 'e.g. 6000', prefix: '₹')),
+        const SizedBox(width: 12),
+        Expanded(child: _NumField(ctrl: _lockedProfitCtrl, label: 'Lock minimum ₹', hint: 'e.g. 3000', prefix: '₹')),
+      ]),
+    ],
+    const SizedBox(height: 16),
+    Divider(color: _K.divider),
+    const SizedBox(height: 12),
+    // Time exit
+    _Label('Square-off Time'),
+    _Drop(
+      value: _timeExit,
+      items: const ['Square off at 3:15 PM', 'Square off at 3:00 PM', 'Square off at 2:30 PM', 'No time-based exit'],
+      onChanged: (v) => setState(() => _timeExit = v!),
+    ),
+    const SizedBox(height: 16),
+    // Trading schedule
+    Row(children: [
+      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text('Start Time', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: _K.t3)),
+        const SizedBox(height: 4),
+        _MiniDrop(value: _startTime, items: const ['09:15 AM', '09:20 AM', '09:30 AM', '10:00 AM', '10:30 AM', '11:00 AM'], onChanged: (v) => setState(() => _startTime = v!)),
+      ])),
+      const SizedBox(width: 12),
+      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text('End Time', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: _K.t3)),
+        const SizedBox(height: 4),
+        _MiniDrop(value: _endTime, items: const ['01:00 PM', '02:00 PM', '02:30 PM', '03:00 PM', '03:15 PM'], onChanged: (v) => setState(() => _endTime = v!)),
+      ])),
+    ]),
+    const SizedBox(height: 12),
+    const Text('Trading Days', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: _K.t3)),
+    const SizedBox(height: 8),
+    Wrap(spacing: 8, runSpacing: 8, children: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].map((day) {
+      final sel = _tradingDays.contains(day);
+      return GestureDetector(
+        onTap: () => setState(() { if (sel) { if (_tradingDays.length > 1) _tradingDays.remove(day); } else _tradingDays.add(day); }),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          width: 48, height: 36,
+          decoration: BoxDecoration(color: sel ? _K.primary : _K.surfaceAlt, borderRadius: BorderRadius.circular(10), border: Border.all(color: sel ? _K.primary : _K.divider)),
+          child: Center(child: Text(day, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: sel ? Colors.white : _K.t2))),
+        ),
+      );
+    }).toList()),
+    const SizedBox(height: 16),
+    Divider(color: _K.divider),
+    const SizedBox(height: 12),
+    // Paper trade
+    Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+      const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [Text('🧪 ', style: TextStyle(fontSize: 15)), Text('Paper Trade', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: _K.t1))]),
+        SizedBox(height: 2),
+        Text('Simulate without real orders', style: TextStyle(fontSize: 11, color: _K.t3)),
+      ]),
+      Switch(value: _paperTrade, onChanged: (v) => setState(() => _paperTrade = v), activeColor: const Color(0xFFD97706)),
+    ]),
+    const SizedBox(height: 16),
+    Divider(color: _K.divider),
+    const SizedBox(height: 12),
+    // Re-entry
+    Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+      const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [Icon(Icons.replay_rounded, color: _K.primary, size: 15), SizedBox(width: 6), Text('Re-entry After Exit', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: _K.t1))]),
+        SizedBox(height: 2),
+        Text('Re-enter after SL or target hit', style: TextStyle(fontSize: 11, color: _K.t3)),
+      ]),
+      Switch(value: _reEntry, onChanged: (v) => setState(() => _reEntry = v), activeColor: _K.primary),
+    ]),
+    if (_reEntry) ...[
       const SizedBox(height: 12),
-      _BacktestPanel(result: _btResult, running: _btRunning, onRun: _runBacktest),
-    ]);
-  }
+      _Chips(options: const ['Time-based', 'Signal-based'], sel: _reEntryMode, onTap: (v) => setState(() => _reEntryMode = v)),
+      if (_reEntryMode == 'Time-based') ...[
+        const SizedBox(height: 10),
+        Row(children: [
+          const Expanded(child: Text('Wait (minutes) before re-entering', style: TextStyle(fontSize: 11, color: _K.t3))),
+          SizedBox(width: 70, child: _MiniField(hint: '30', initial: _reEntryWait, onChanged: (v) => setState(() => _reEntryWait = v))),
+        ]),
+      ],
+    ],
+  ]);
 
+  // ════════════════════════════════════════════════════════════════════════════
+  // SECTION 5 — BACKTEST
+  // ════════════════════════════════════════════════════════════════════════════
+  Widget _backtestContent() => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    const Text('Period', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: _K.t3)),
+    const SizedBox(height: 8),
+    Wrap(spacing: 8, runSpacing: 8, children: ['1 Month', '3 Months', '6 Months', '1 Year', '2 Years'].map((r) {
+      final sel = _btRange == r;
+      return GestureDetector(
+        onTap: () => setState(() { _btRange = r; _btResult = null; }),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+          decoration: BoxDecoration(color: sel ? _K.primary : _K.surfaceAlt, borderRadius: BorderRadius.circular(20), border: Border.all(color: sel ? _K.primary : _K.divider)),
+          child: Text(r, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: sel ? Colors.white : _K.t2)),
+        ),
+      );
+    }).toList()),
+    const SizedBox(height: 14),
+    _BacktestPanel(result: _btResult, running: _btRunning, onRun: _runBacktest),
+  ]);
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
   String _fmt(double v) {
     final a = v.abs();
     if (a >= 100000) return '${(v / 100000).toStringAsFixed(1)}L';
@@ -2117,7 +1663,6 @@ class _CSS extends State<CreateStrategyScreen> {
   }
 
   // ── Fix 3: live spot price helper ─────────────────────────────────────────
-  // Tries the LivePriceService cache first; falls back to static reference prices.
   static const _kStaticSpot = {
     'NIFTY': 24500.0, 'BANKNIFTY': 52000.0, 'FINNIFTY': 23000.0,
     'MIDCPNIFTY': 12000.0, 'SENSEX': 80000.0,
@@ -2129,7 +1674,67 @@ class _CSS extends State<CreateStrategyScreen> {
 
 } // end _CSS
 // ─────────────────────────────────────────────────────────────────────────────
-// Strategy Type Selector widget (Quantman-style: Options / Stocks cards)
+// Section card — collapsible section wrapper for the single-scroll layout
+// ─────────────────────────────────────────────────────────────────────────────
+class _SectionCard extends StatelessWidget {
+  const _SectionCard({
+    required this.title,
+    required this.icon,
+    required this.expanded,
+    required this.onToggle,
+    required this.child,
+  });
+  final String title;
+  final IconData icon;
+  final bool expanded;
+  final VoidCallback onToggle;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    decoration: _K.card(),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      // Header — always visible, tapping collapses / expands
+      InkWell(
+        onTap: onToggle,
+        borderRadius: expanded
+            ? const BorderRadius.vertical(top: Radius.circular(16))
+            : BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+          child: Row(children: [
+            Container(
+              width: 32, height: 32,
+              decoration: BoxDecoration(color: _K.primaryBg, borderRadius: BorderRadius.circular(9)),
+              child: Icon(icon, color: _K.primary, size: 17),
+            ),
+            const SizedBox(width: 12),
+            Expanded(child: Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: _K.t1))),
+            AnimatedRotation(
+              turns: expanded ? 0.5 : 0,
+              duration: const Duration(milliseconds: 200),
+              child: const Icon(Icons.keyboard_arrow_down_rounded, color: _K.t3, size: 22),
+            ),
+          ]),
+        ),
+      ),
+      // Body — animated show/hide
+      AnimatedCrossFade(
+        firstChild: const SizedBox.shrink(),
+        secondChild: Column(children: [
+          Divider(height: 1, color: _K.divider),
+          Padding(padding: const EdgeInsets.fromLTRB(16, 14, 16, 16), child: child),
+        ]),
+        crossFadeState: expanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+        duration: const Duration(milliseconds: 220),
+        sizeCurve: Curves.easeInOut,
+      ),
+    ]),
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Strategy Type Selector widget (Options / Stocks cards)
 // ─────────────────────────────────────────────────────────────────────────────
 class _TypeSelector extends StatelessWidget {
   const _TypeSelector({required this.selected, required this.onChanged});
@@ -2726,47 +2331,6 @@ class _GreekChip extends StatelessWidget {
       TextSpan(text: '$label ', style: const TextStyle(fontSize: 9, color: _K.t3, fontWeight: FontWeight.w500)),
       TextSpan(text: value,    style: const TextStyle(fontSize: 10, color: _K.t1, fontWeight: FontWeight.w700)),
     ])),
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// _StepBar — adapts labels per flow type
-// ─────────────────────────────────────────────────────────────────────────────
-class _StepBar extends StatelessWidget {
-  const _StepBar({required this.step, required this.steps});
-  final int step; final List<String> steps;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    color: _K.surface,
-    padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
-    child: Column(children: [
-      Row(children: List.generate(steps.length * 2 - 1, (i) {
-        if (i.isOdd) return Expanded(child: Container(height: 2, color: (i ~/ 2) < step ? _K.primary : _K.divider));
-        final idx = i ~/ 2; final done = idx < step; final active = idx == step;
-        return Expanded(flex: 2, child: Center(child: Container(
-          width: 28, height: 28,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: (done || active) ? _K.primary : _K.surfaceAlt,
-            border: Border.all(color: (done || active) ? _K.primary : _K.divider, width: 1.5),
-          ),
-          child: Center(child: done
-            ? const Icon(Icons.check_rounded, size: 14, color: Colors.white)
-            : Text('${idx+1}', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: active ? Colors.white : _K.t3))),
-        )));
-      })),
-      const SizedBox(height: 6),
-      Row(children: List.generate(steps.length * 2 - 1, (i) {
-        if (i.isOdd) return const Expanded(child: SizedBox());
-        final idx = i ~/ 2; final active = idx == step;
-        return Expanded(flex: 2, child: Text(
-          steps[idx],
-          style: TextStyle(fontSize: 8.5, fontWeight: active ? FontWeight.w800 : FontWeight.w500, color: active ? _K.primary : _K.t3),
-          textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.visible,
-        ));
-      })),
-    ]),
   );
 }
 
@@ -3842,36 +3406,6 @@ class _OutlineBtn extends StatelessWidget {
     ),
   );
 }
-
-class _RevSec extends StatelessWidget {
-  const _RevSec({required this.title, required this.child, this.onEdit});
-  final String title; final Widget child; final VoidCallback? onEdit;
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(14), decoration: _K.card(),
-    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        Text(title, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: _K.t1)),
-        if (onEdit != null) GestureDetector(onTap: onEdit, child: const Text('Edit', style: TextStyle(fontSize: 12, color: _K.primary, fontWeight: FontWeight.w700))),
-      ]),
-      const SizedBox(height: 10), child,
-    ]),
-  );
-}
-
-class _RevRow extends StatelessWidget {
-  const _RevRow({required this.label, required this.value});
-  final String label, value;
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 6),
-    child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-      Text(label, style: const TextStyle(fontSize: 12, color: _K.t3)),
-      Text(value,  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _K.t1)),
-    ]),
-  );
-}
-
 class _RChip extends StatelessWidget {
   const _RChip({required this.label, required this.color});
   final String label; final Color color;

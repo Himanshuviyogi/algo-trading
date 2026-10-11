@@ -1,0 +1,35 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Flutter / Dart
+flutter_app/.dart_tool/
+flutter_app/build/
+flutter_app/.flutter-plugins
+flutter_app/.flutter-plugins-dependencies
+flutter_app/.packages
+flutter_app/**/*.g.dart
+flutter_app/**/*.freezed.dart
+
+# Node / Firebase Functions
+firebase/functions/node_modules/
+firebase/functions/lib/
+firebase/functions/.env
+
+# Admin panel
+admin-panel/node_modules/
+admin-panel/dist/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Secrets / env
+*.env
+.env
+*.env.local
+google-services.json
+GoogleService-Info.plist
+firebase/functions/.runtimeconfig.json

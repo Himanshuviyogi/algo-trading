@@ -1,0 +1,183 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Helper function to check if user is admin
+    function isAdmin() {
+      return isAuthenticated() && request.auth.token.admin == true;
+    }
+    
+    // Admins collection — used by admin panel login check
+    match /admins/{email} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Users collection
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+
+      // Broker connections — each user can only read/write their own credentials
+      match /broker_connections/{brokerId} {
+        allow read:  if isAuthenticated() && request.auth.uid == userId;
+        allow write: if isAuthenticated() && request.auth.uid == userId;
+      }
+
+      // Strategies — each user reads/creates/updates/deletes their own only.
+      // Firebase Functions and the price server write via Admin SDK (bypasses rules),
+      // so the engine can update status, pnl, entry/exit fields without client auth.
+      match /strategies/{strategyId} {
+        // Read: only the owner
+        allow read:   if isAuthenticated() && request.auth.uid == userId;
+
+        // Create: owner only, and the user_id field must match their uid
+        allow create: if isAuthenticated()
+                      && request.auth.uid == userId
+                      && request.resource.data.user_id == request.auth.uid;
+
+        // Update: owner can edit their own strategy
+        // (engine updates via Admin SDK so this rule only affects Flutter client)
+        allow update: if isAuthenticated() && request.auth.uid == userId;
+
+        // Delete: owner only
+        allow delete: if isAuthenticated() && request.auth.uid == userId;
+      }
+    }
+    
+    // Subscriptions collection
+    match /subscriptions/{subscriptionId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+    
+    // Plans collection
+    match /plans/{planId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+    
+    // WhatsApp message logs collection
+    match /whatsapp_message_logs/{logId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+    }
+    
+    // Recommendations collection
+    match /recommendations/{recommendationId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+    
+    // Trades collection
+    match /trades/{tradeId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+    
+    // Stocks collection
+    match /stocks/{stockId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Socket reconnect logs — each user writes only to their own doc
+    match /socket_logs/{userId} {
+      allow read:  if isAdmin();
+      allow write: if isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // App config — read by all authenticated users, write by admin only
+    match /app_config/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Subscription plans
+    match /subscription_plans/{planId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Instrument tokens (price feed symbols)
+    match /instrument_tokens/{tokenId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Daily updates
+    match /daily_updates/{updateId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Notifications history
+    match /notifications/{notifId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Payment orders (Razorpay)
+    match /payment_orders/{orderId} {
+      allow read: if isAdmin();
+      allow write: if isAuthenticated();
+    }
+
+    // Price stale alerts — written by price server (service account), read by admin
+    match /price_alerts/{symbol} {
+      allow read: if isAdmin();
+      allow write: if isAuthenticated();
+    }
+
+    // Market data (FII/DII, daily summary) — read by all authenticated users
+    // Written only by Firebase Functions (service account) or admin
+    match /market_data/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Screeners — pre-computed daily by Firebase Function, read by all users
+    match /screeners/{screenerId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Activation requests — users create their own, admin reads/writes all
+    match /activation_requests/{requestId} {
+      allow read:   if isAuthenticated() && (request.auth.uid == resource.data.user_id || isAdmin());
+      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.user_id;
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // AI chat coins — each user reads/writes only their own daily coin balance
+    match /ai_coins/{userId} {
+      allow read:  if isAuthenticated() && request.auth.uid == userId;
+      allow write: if isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Algo signals — readable by all authenticated users; write by admin/Functions only
+    match /algo_signals/{signalId} {
+      allow read:  if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Orders — users read/create their own; price server (Admin SDK) updates status
+    match /orders/{orderId} {
+      allow read:   if isAuthenticated() && resource.data.user_id == request.auth.uid;
+      allow create: if isAuthenticated() && request.resource.data.user_id == request.auth.uid;
+      allow update: if isAdmin();  // price server uses Admin SDK — effectively bypasses rules
+      allow delete: if false;
+    }
+
+    // Positions — users read their own; price server writes via Admin SDK
+    match /positions/{positionId} {
+      allow read:  if isAuthenticated() && resource.data.user_id == request.auth.uid;
+      allow write: if false;  // price server + Functions write via Admin SDK only
+    }
+  }
+}

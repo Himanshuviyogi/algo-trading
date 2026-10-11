@@ -709,7 +709,36 @@ class _CSS extends State<CreateStrategyScreen> {
     super.dispose();
   }
 
-  void _back() => context.pop();
+  void _back() async {
+    // If there's meaningful content, ask before discarding
+    final name = _nameCtrl.text.trim();
+    final hasContent = name.isNotEmpty &&
+        name != 'My Options Strategy' && name != 'My Stock Strategy';
+    if (!hasContent) { context.pop(); return; }
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _K.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Save before leaving?',
+            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: _K.t1)),
+        content: const Text('Your strategy has unsaved changes.',
+            style: TextStyle(fontSize: 13, color: _K.t2)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, 'discard'),
+              child: const Text('Discard', style: TextStyle(color: _K.loss, fontWeight: FontWeight.w700))),
+          TextButton(onPressed: () => Navigator.pop(ctx, 'draft'),
+              child: const Text('Save Draft', style: TextStyle(color: _K.t2, fontWeight: FontWeight.w700))),
+          TextButton(onPressed: () => Navigator.pop(ctx, 'stay'),
+              child: const Text('Keep Editing', style: TextStyle(color: _K.primary, fontWeight: FontWeight.w700))),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    if (choice == 'discard') context.pop();
+    else if (choice == 'draft') await _saveDraft();
+    // 'stay' or null → do nothing
+  }
 
   // ── Backtest ───────────────────────────────────────────────────────────────
   Future<void> _runBacktest() async {
@@ -986,16 +1015,66 @@ class _CSS extends State<CreateStrategyScreen> {
     ));
   }
 
-  // ── Build ──────────────────────────────────────────────────────────────────
+  // ── Completion score — drives section status badges & button state ──────────
+  // Returns 0–100. We check: name, instrument, conditions, legs/position,
+  // risk fields. Each bucket worth ~20 points.
+  int get _completionScore {
+    int score = 0;
+    // Name not default
+    final name = _nameCtrl.text.trim();
+    if (name.isNotEmpty && name != 'My Options Strategy' && name != 'My Stock Strategy') score += 20;
+    // Instrument set
+    if (_stratType == _StratType.options && _underlying.isNotEmpty) score += 20;
+    if (_stratType == _StratType.stocks  && _stockSymbol.isNotEmpty) score += 20;
+    // At least 1 entry condition with a value
+    if (_entryConds.isNotEmpty && _entryConds.any((c) => c.valueA.isNotEmpty || c.rhsIsInd)) score += 20;
+    // Legs / position filled
+    if (_stratType == _StratType.options && _legs.isNotEmpty) score += 20;
+    if (_stratType == _StratType.stocks  && _stockSymbol.isNotEmpty) score += 20;
+    // Risk: at least SL or target set
+    if (_slCtrl.text.trim().isNotEmpty || _tgtCtrl.text.trim().isNotEmpty) score += 20;
+    return score.clamp(0, 100);
+  }
+
+  // Returns a status label for each section based on its own completeness.
+  String _sectionStatus(String section) {
+    switch (section) {
+      case 'setup':
+        final name = _nameCtrl.text.trim();
+        final hasName = name.isNotEmpty && name != 'My Options Strategy' && name != 'My Stock Strategy';
+        final hasInstrument = _stratType == _StratType.options ? _underlying.isNotEmpty : _stockSymbol.isNotEmpty;
+        if (hasName && hasInstrument) return 'done';
+        if (hasInstrument) return 'partial';
+        return 'empty';
+      case 'conditions':
+        if (_entryConds.any((c) => c.valueA.isNotEmpty || c.rhsIsInd)) return 'done';
+        if (_entryConds.isNotEmpty) return 'partial';
+        return 'empty';
+      case 'legs':
+        if (_stratType == _StratType.options) return _legs.isNotEmpty ? 'done' : 'empty';
+        return _stockSymbol.isNotEmpty ? 'done' : 'empty';
+      case 'risk':
+        if (_slCtrl.text.trim().isNotEmpty && _tgtCtrl.text.trim().isNotEmpty) return 'done';
+        if (_slCtrl.text.trim().isNotEmpty || _tgtCtrl.text.trim().isNotEmpty) return 'partial';
+        return 'empty';
+      default: return 'empty';
+    }
+  }
+
+  bool get _readyToDeploy => _completionScore >= 80;
   @override
-  Widget build(BuildContext context) => Scaffold(
+  @override
+  Widget build(BuildContext context) => PopScope(
+    canPop: false,
+    onPopInvokedWithResult: (didPop, _) { if (!didPop) _back(); },
+    child: Scaffold(
     backgroundColor: _K.bg,
     appBar: _appBar(),
     body: CustomScrollView(
       controller: _scrollCtrl,
       slivers: [
         SliverPadding(
-          padding: const EdgeInsets.fromLTRB(16, 18, 16, 120),
+          padding: const EdgeInsets.fromLTRB(16, 18, 16, 32),
           sliver: SliverList(
             delegate: SliverChildListDelegate([
               // ── Strategy type ──────────────────────────────────────────────
@@ -1026,6 +1105,7 @@ class _CSS extends State<CreateStrategyScreen> {
               _SectionCard(
                 title: '1  Setup',
                 icon: Icons.tune_rounded,
+                status: _sectionStatus('setup'),
                 expanded: _secSetup,
                 onToggle: () => setState(() => _secSetup = !_secSetup),
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1042,6 +1122,7 @@ class _CSS extends State<CreateStrategyScreen> {
               _SectionCard(
                 title: '2  Conditions',
                 icon: Icons.account_tree_rounded,
+                status: _sectionStatus('conditions'),
                 expanded: _secConditions,
                 onToggle: () => setState(() => _secConditions = !_secConditions),
                 child: _conditionsContent(),
@@ -1052,6 +1133,7 @@ class _CSS extends State<CreateStrategyScreen> {
               _SectionCard(
                 title: _stratType == _StratType.options ? '3  Option Legs' : '3  Position',
                 icon: _stratType == _StratType.options ? Icons.layers_rounded : Icons.bar_chart_rounded,
+                status: _sectionStatus('legs'),
                 expanded: _secLegs,
                 onToggle: () => setState(() => _secLegs = !_secLegs),
                 child: _stratType == _StratType.options ? _legsContent2() : _stockPositionContent(),
@@ -1062,6 +1144,7 @@ class _CSS extends State<CreateStrategyScreen> {
               _SectionCard(
                 title: '4  Risk & Exit',
                 icon: Icons.shield_outlined,
+                status: _sectionStatus('risk'),
                 expanded: _secRisk,
                 onToggle: () => setState(() => _secRisk = !_secRisk),
                 child: _riskContent(),
@@ -1076,12 +1159,23 @@ class _CSS extends State<CreateStrategyScreen> {
                 onToggle: () => setState(() => _secBacktest = !_secBacktest),
                 child: _backtestContent(),
               ),
+              const SizedBox(height: 20),
+
+              // ── Inline action card — embedded in scroll ────────────────────
+              _ActionCard(
+                score: _completionScore,
+                readyToDeploy: _readyToDeploy,
+                saving: _saving,
+                isEditing: _editing,
+                onSaveDraft: _saving ? null : _saveDraft,
+                onDeploy: _saving ? null : _deployNow,
+              ),
             ]),
           ),
         ),
       ],
     ),
-    bottomNavigationBar: _bottomBar(),
+  ),
   );
 
   AppBar _appBar() => AppBar(
@@ -1117,43 +1211,6 @@ class _CSS extends State<CreateStrategyScreen> {
         ),
       ),
     ],
-  );
-
-  Widget _bottomBar() => SafeArea(
-    top: false,
-    child: Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            begin: Alignment.topLeft, end: Alignment.bottomRight,
-            colors: [Color(0xFF1D4ED8), Color(0xFF4F46E5)],
-          ),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.15)),
-          boxShadow: [
-            BoxShadow(color: const Color(0xFF2563EB).withValues(alpha: 0.35), blurRadius: 24, spreadRadius: -4, offset: const Offset(0, 8)),
-          ],
-        ),
-        child: Row(children: [
-          Expanded(child: _OutlineBtn(
-            label: _saving ? 'Saving…' : 'Save Draft',
-            onTap: _saving ? () {} : _saveDraft,
-            dark: true,
-          )),
-          const SizedBox(width: 10),
-          Expanded(
-            flex: 2,
-            child: _PrimaryBtn(
-              label: _saving ? 'Deploying…' : '🚀 Deploy Now',
-              loading: _saving,
-              onTap: _saving ? null : _deployNow,
-            ),
-          ),
-        ]),
-      ),
-    ),
   );
 
   // ── Templates sheet ─────────────────────────────────────────────────────────
@@ -1683,54 +1740,249 @@ class _SectionCard extends StatelessWidget {
     required this.expanded,
     required this.onToggle,
     required this.child,
+    this.status, // 'done' | 'partial' | 'empty' | null
   });
   final String title;
   final IconData icon;
   final bool expanded;
   final VoidCallback onToggle;
   final Widget child;
+  final String? status;
 
   @override
-  Widget build(BuildContext context) => Container(
-    decoration: _K.card(),
-    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      // Header — always visible, tapping collapses / expands
-      InkWell(
-        onTap: onToggle,
-        borderRadius: expanded
-            ? const BorderRadius.vertical(top: Radius.circular(16))
-            : BorderRadius.circular(16),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-          child: Row(children: [
-            Container(
-              width: 32, height: 32,
-              decoration: BoxDecoration(color: _K.primaryBg, borderRadius: BorderRadius.circular(9)),
-              child: Icon(icon, color: _K.primary, size: 17),
-            ),
-            const SizedBox(width: 12),
-            Expanded(child: Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: _K.t1))),
-            AnimatedRotation(
-              turns: expanded ? 0.5 : 0,
-              duration: const Duration(milliseconds: 200),
-              child: const Icon(Icons.keyboard_arrow_down_rounded, color: _K.t3, size: 22),
-            ),
-          ]),
+  Widget build(BuildContext context) {
+    final badgeColor = status == 'done'    ? _K.profit
+                     : status == 'partial' ? _K.warning
+                     : _K.t4;
+    final badgeIcon  = status == 'done'    ? Icons.check_rounded
+                     : status == 'partial' ? Icons.edit_rounded
+                     : Icons.radio_button_unchecked_rounded;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: _K.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: status == 'done' ? _K.profit.withValues(alpha: 0.25) : _K.divider),
+        boxShadow: _K.shadow,
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        InkWell(
+          onTap: onToggle,
+          borderRadius: expanded
+              ? const BorderRadius.vertical(top: Radius.circular(16))
+              : BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+            child: Row(children: [
+              Container(
+                width: 32, height: 32,
+                decoration: BoxDecoration(
+                  color: status == 'done' ? _K.profit.withValues(alpha: 0.1) : _K.primaryBg,
+                  borderRadius: BorderRadius.circular(9),
+                ),
+                child: Icon(icon, color: status == 'done' ? _K.profit : _K.primary, size: 17),
+              ),
+              const SizedBox(width: 12),
+              Expanded(child: Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: _K.t1))),
+              // Status badge
+              if (status != null) ...[
+                Container(
+                  width: 22, height: 22,
+                  decoration: BoxDecoration(
+                    color: badgeColor.withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: badgeColor.withValues(alpha: 0.4)),
+                  ),
+                  child: Icon(badgeIcon, size: 12, color: badgeColor),
+                ),
+                const SizedBox(width: 8),
+              ],
+              AnimatedRotation(
+                turns: expanded ? 0.5 : 0,
+                duration: const Duration(milliseconds: 200),
+                child: const Icon(Icons.keyboard_arrow_down_rounded, color: _K.t3, size: 22),
+              ),
+            ]),
+          ),
         ),
+        AnimatedCrossFade(
+          firstChild: const SizedBox.shrink(),
+          secondChild: Column(children: [
+            Divider(height: 1, color: _K.divider),
+            Padding(padding: const EdgeInsets.fromLTRB(16, 14, 16, 16), child: child),
+          ]),
+          crossFadeState: expanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+          duration: const Duration(milliseconds: 220),
+          sizeCurve: Curves.easeInOut,
+        ),
+      ]),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Action card — embedded in scroll, replaces floating bottom bar
+// ─────────────────────────────────────────────────────────────────────────────
+class _ActionCard extends StatelessWidget {
+  const _ActionCard({
+    required this.score,
+    required this.readyToDeploy,
+    required this.saving,
+    required this.isEditing,
+    required this.onSaveDraft,
+    required this.onDeploy,
+  });
+  final int score;
+  final bool readyToDeploy, saving, isEditing;
+  final VoidCallback? onSaveDraft, onDeploy;
+
+  @override
+  Widget build(BuildContext context) {
+    final pct = score / 100.0;
+    final statusLabel = score >= 80 ? 'Ready to deploy'
+                      : score >= 40 ? 'In progress'
+                      : 'Just started';
+    final statusColor = score >= 80 ? _K.profit
+                      : score >= 40 ? _K.warning
+                      : _K.t3;
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: _K.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: readyToDeploy ? _K.profit.withValues(alpha: 0.35) : _K.divider,
+          width: readyToDeploy ? 1.5 : 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: readyToDeploy
+                ? _K.profit.withValues(alpha: 0.10)
+                : const Color(0xFF1E3A8A).withValues(alpha: 0.06),
+            blurRadius: 16, offset: const Offset(0, 4),
+          ),
+        ],
       ),
-      // Body — animated show/hide
-      AnimatedCrossFade(
-        firstChild: const SizedBox.shrink(),
-        secondChild: Column(children: [
-          Divider(height: 1, color: _K.divider),
-          Padding(padding: const EdgeInsets.fromLTRB(16, 14, 16, 16), child: child),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // ── Completion header ─────────────────────────────────────────────────
+        Row(children: [
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(
+              isEditing ? 'Update Strategy' : 'Strategy Completion',
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: _K.t1),
+            ),
+            const SizedBox(height: 2),
+            Text(statusLabel, style: TextStyle(fontSize: 11, color: statusColor, fontWeight: FontWeight.w600)),
+          ])),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: statusColor.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: statusColor.withValues(alpha: 0.3)),
+            ),
+            child: Text('$score%', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: statusColor)),
+          ),
         ]),
-        crossFadeState: expanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
-        duration: const Duration(milliseconds: 220),
-        sizeCurve: Curves.easeInOut,
-      ),
-    ]),
-  );
+        const SizedBox(height: 12),
+
+        // ── Progress bar ──────────────────────────────────────────────────────
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: LinearProgressIndicator(
+            value: pct,
+            minHeight: 6,
+            backgroundColor: _K.surfaceAlt,
+            valueColor: AlwaysStoppedAnimation<Color>(
+              score >= 80 ? _K.profit : score >= 40 ? _K.warning : _K.primary,
+            ),
+          ),
+        ),
+
+        if (!readyToDeploy) ...[
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(color: _K.surfaceAlt, borderRadius: BorderRadius.circular(10)),
+            child: Row(children: [
+              const Icon(Icons.info_outline_rounded, size: 13, color: _K.t3),
+              const SizedBox(width: 8),
+              Expanded(child: Text(
+                score < 40
+                    ? 'Set up your instrument, add entry conditions, and configure a leg to deploy.'
+                    : 'Almost there — add a stop-loss or target to unlock Deploy.',
+                style: const TextStyle(fontSize: 11, color: _K.t2, height: 1.4),
+              )),
+            ]),
+          ),
+        ],
+
+        const SizedBox(height: 16),
+
+        // ── Buttons ───────────────────────────────────────────────────────────
+        // Save Draft — always available, secondary style
+        GestureDetector(
+          onTap: onSaveDraft,
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            decoration: BoxDecoration(
+              color: saving ? _K.surfaceAlt : _K.surface,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: _K.divider, width: 1.5),
+            ),
+            child: Center(child: saving
+              ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: _K.t3))
+              : Row(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.save_outlined, size: 16, color: _K.t2),
+                  const SizedBox(width: 8),
+                  Text(isEditing ? 'Update Draft' : 'Save as Draft',
+                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: _K.t2)),
+                ]),
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+
+        // Deploy Now — primary, glows green when ready
+        GestureDetector(
+          onTap: readyToDeploy ? onDeploy : null,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 250),
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            decoration: BoxDecoration(
+              gradient: readyToDeploy
+                  ? const LinearGradient(
+                      colors: [Color(0xFF16A34A), Color(0xFF15803D)],
+                      begin: Alignment.topLeft, end: Alignment.bottomRight,
+                    )
+                  : LinearGradient(colors: [_K.t4, _K.t4]),
+              borderRadius: BorderRadius.circular(14),
+              boxShadow: readyToDeploy ? [
+                BoxShadow(color: _K.profit.withValues(alpha: 0.35), blurRadius: 16, offset: const Offset(0, 6)),
+              ] : [],
+            ),
+            child: Center(child: saving
+              ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+              : Row(mainAxisSize: MainAxisSize.min, children: [
+                  Text(readyToDeploy ? '🚀' : '🔒', style: const TextStyle(fontSize: 16)),
+                  const SizedBox(width: 8),
+                  Text(
+                    readyToDeploy ? 'Deploy Live' : 'Complete strategy to deploy',
+                    style: TextStyle(
+                      fontSize: 14, fontWeight: FontWeight.w800,
+                      color: readyToDeploy ? Colors.white : _K.t3,
+                    ),
+                  ),
+                ]),
+            ),
+          ),
+        ),
+      ]),
+    );
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3366,44 +3618,6 @@ class _QtyCtr extends StatelessWidget {
       Text('$value', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: _K.t1)),
       GestureDetector(onTap: onInc, child: const Padding(padding: EdgeInsets.symmetric(horizontal: 8, vertical: 8), child: Icon(Icons.add_rounded, size: 14, color: _K.t1))),
     ]),
-  );
-}
-
-class _PrimaryBtn extends StatelessWidget {
-  const _PrimaryBtn({required this.label, required this.onTap, this.loading = false});
-  final String label; final VoidCallback? onTap; final bool loading;
-  @override
-  Widget build(BuildContext context) => GestureDetector(
-    onTap: onTap,
-    child: Container(
-      height: 48,
-      decoration: BoxDecoration(
-        color: onTap == null ? Colors.white.withValues(alpha: 0.2) : Colors.white.withValues(alpha: 0.22),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.35), width: 1.2),
-      ),
-      child: Center(child: loading
-        ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-        : Text(label, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: 0.1))),
-    ),
-  );
-}
-
-class _OutlineBtn extends StatelessWidget {
-  const _OutlineBtn({required this.label, required this.onTap, this.dark = false});
-  final String label; final VoidCallback onTap; final bool dark;
-  @override
-  Widget build(BuildContext context) => GestureDetector(
-    onTap: onTap,
-    child: Container(
-      height: 48,
-      decoration: BoxDecoration(
-        color: dark ? Colors.white.withValues(alpha: 0.1) : _K.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: dark ? Colors.white.withValues(alpha: 0.18) : _K.divider, width: 1.5),
-      ),
-      child: Center(child: Text(label, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: dark ? Colors.white : _K.t2))),
-    ),
   );
 }
 class _RChip extends StatelessWidget {

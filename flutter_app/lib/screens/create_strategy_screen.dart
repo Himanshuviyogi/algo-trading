@@ -793,6 +793,10 @@ class _CSS extends State<CreateStrategyScreen> {
         'slPct':      _slCtrl.text.trim().isEmpty  ? '50'  : _slCtrl.text.trim(),
         'tgtPct':     _tgtCtrl.text.trim().isEmpty ? '100' : _tgtCtrl.text.trim(),
         'range':      _btRange,
+        'action':     _stratType == _StratType.options
+                        ? (_style == 'Selling' ? 'SELL' : 'BUY')
+                        : (_stockStyle == 'Long' ? 'BUY' : 'SELL'),
+        'shares':     int.tryParse(_sharesCtrl.text.trim()) ?? 10,
         'entryConds': _entryConds.map((c) => c.toMap()).toList(),
         'exitConds':  _exitConds.map((c) => c.toMap()).toList(),
         if (_stratType == _StratType.options)
@@ -800,7 +804,7 @@ class _CSS extends State<CreateStrategyScreen> {
       };
       final res = await http
           .post(Uri.parse('$_kServerUrl/backtest'), headers: headers, body: jsonEncode(payload))
-          .timeout(const Duration(seconds: 30));
+          .timeout(const Duration(seconds: 60));
       if (!mounted) return;
       if (res.statusCode == 429) { _snack('Backtest already running — please wait.', err: true); return; }
       if (res.statusCode != 200) {
@@ -812,7 +816,7 @@ class _CSS extends State<CreateStrategyScreen> {
       if (body['success'] != true) { _snack('Backtest failed: ${body['error'] ?? 'Unknown error'}', err: true); return; }
       setState(() => _btResult = _BacktestResult.fromJson(body));
     } on TimeoutException {
-      if (mounted) _snack('Backtest timed out — try a higher timeframe.', err: true);
+      if (mounted) _snack('Backtest timed out — try a shorter range or higher timeframe.', err: true);
     } catch (e) {
       if (mounted) _snack('Backtest error: $e', err: true);
     } finally {

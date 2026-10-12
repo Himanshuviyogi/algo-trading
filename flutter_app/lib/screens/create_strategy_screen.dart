@@ -420,11 +420,13 @@ class CreateStrategyScreen extends StatefulWidget {
     super.key,
     this.prefillSymbol, this.prefillName, this.prefillPrice,
     this.editDocId, this.editUid, this.prefillData,
+    this.scrollToBacktest = false,
   });
   final String? prefillSymbol, prefillName;
   final double? prefillPrice;
   final String? editDocId, editUid;
   final Map<String, dynamic>? prefillData;
+  final bool scrollToBacktest; // open & scroll to Backtest section on launch
 
   @override
   State<CreateStrategyScreen> createState() => _CSS();
@@ -569,6 +571,24 @@ class _CSS extends State<CreateStrategyScreen> {
     final pd = widget.prefillData;
     if (pd != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) { if (mounted) _applyPrefill(pd); });
+    }
+
+    // When launched from "Backtest" button: expand & scroll to Backtest section
+    if (widget.scrollToBacktest) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() => _secBacktest = true);
+        // Give the list a frame to lay out before scrolling to the end
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _scrollCtrl.hasClients) {
+            _scrollCtrl.animateTo(
+              _scrollCtrl.position.maxScrollExtent,
+              duration: const Duration(milliseconds: 500),
+              curve: Curves.easeInOut,
+            );
+          }
+        });
+      });
     }
   }
 

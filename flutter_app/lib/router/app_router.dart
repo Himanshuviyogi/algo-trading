@@ -435,6 +435,7 @@ GoRouter createAppRouter({
             prefillSymbol: extra['prefillSymbol'] as String?,
             prefillName:   extra['prefillName']   as String?,
             prefillPrice:  (extra['prefillPrice'] as num?)?.toDouble(),
+            scrollToBacktest: extra['scrollToBacktest'] as bool? ?? false,
           );
         },
       ),

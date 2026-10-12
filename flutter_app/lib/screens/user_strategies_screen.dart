@@ -819,8 +819,17 @@ class _StrategyCard extends StatelessWidget {
     }
   }
 
-  Future<void> _deploy(BuildContext context) async {
-    if (uid == null || docId.isEmpty) return;
+  void _backtest(BuildContext context) {
+    if (uid == null) return;
+    context.push('/create-strategy', extra: {
+      'editDocId':        docId,
+      'editUid':          uid,
+      'prefill':          rawData,
+      'scrollToBacktest': true,
+    });
+  }
+
+  Future<void> _deploy(BuildContext context) async {    if (uid == null || docId.isEmpty) return;
     try {
       await FirebaseFirestore.instance
           .collection('users')
@@ -1166,6 +1175,56 @@ class _StrategyCard extends StatelessWidget {
                     ))
                         .toList(),
                   ),
+                ],
+
+                // ── Own-strategy action row: Backtest + Edit ─────────
+                if (isOwn && uid != null) ...[
+                  const SizedBox(height: 12),
+                  Row(children: [
+                    // Backtest button — always shown for own strategies
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => _backtest(context),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 11),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF2C6FB0).withValues(alpha: 0.08),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xFF2C6FB0).withValues(alpha: 0.3)),
+                          ),
+                          child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                            Icon(Icons.analytics_rounded, color: Color(0xFF2C6FB0), size: 15),
+                            SizedBox(width: 6),
+                            Text('Backtest', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Color(0xFF2C6FB0))),
+                          ]),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    // Edit button
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => context.push('/create-strategy', extra: {
+                          'editDocId': docId,
+                          'editUid':   uid,
+                          'prefill':   rawData,
+                        }),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 11),
+                          decoration: BoxDecoration(
+                            color: _UT.surface2,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: _UT.divider),
+                          ),
+                          child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                            Icon(Icons.edit_rounded, color: _UT.t2, size: 15),
+                            SizedBox(width: 6),
+                            Text('Edit', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: _UT.t2)),
+                          ]),
+                        ),
+                      ),
+                    ),
+                  ]),
                 ],
 
                 // ── Draft deploy button ─────────────────────────────

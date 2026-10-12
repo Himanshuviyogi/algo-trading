@@ -592,6 +592,23 @@ class _CSS extends State<CreateStrategyScreen> {
     }
   }
 
+  // ── Denormalize order type from Firestore token → display label ──────────
+  // _buildDoc serializes 'MARKET', 'LIMIT', 'SL', 'SL_M'.
+  // The dropdown items are 'Market Order', 'Limit Order', 'SL Order', 'SL-M Order'.
+  static String _denormOrderType(String raw) {
+    switch (raw.toUpperCase().replaceAll(' ', '_').replaceAll('-', '_')) {
+      case 'MARKET':       return 'Market Order';
+      case 'LIMIT':        return 'Limit Order';
+      case 'SL':           return 'SL Order';
+      case 'SL_M':         return 'SL-M Order';
+      case 'MARKET_ORDER': return 'Market Order';
+      case 'LIMIT_ORDER':  return 'Limit Order';
+      case 'SL_ORDER':     return 'SL Order';
+      case 'SL_M_ORDER':   return 'SL-M Order';
+      default:             return 'Market Order';
+    }
+  }
+
   // ── Fix 2: full state restore from Firestore doc when editing ─────────────
   void _applyPrefill(Map<String, dynamic> d) {
     setState(() {
@@ -665,7 +682,7 @@ class _CSS extends State<CreateStrategyScreen> {
       }
 
       // Step 3 — Position sizing
-      _orderType  = d['order_type']      as String? ?? _orderType;
+      _orderType  = _denormOrderType(d['order_type'] as String? ?? _orderType);
       _posSizing  = d['position_sizing'] as String? ?? _posSizing;
       _stockSizing = _posSizing;
       final lots    = d['lots']           as int?;
@@ -3569,17 +3586,22 @@ class _Drop extends StatelessWidget {
   const _Drop({required this.value, required this.items, required this.onChanged});
   final String value; final List<String> items; final ValueChanged<String?> onChanged;
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
-    decoration: BoxDecoration(color: _K.surface, borderRadius: BorderRadius.circular(12), border: Border.all(color: _K.divider), boxShadow: _K.shadow),
-    child: DropdownButtonHideUnderline(child: DropdownButton<String>(
-      value: value, isExpanded: true,
-      icon: const Icon(Icons.keyboard_arrow_down_rounded, color: _K.t3, size: 18),
-      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: _K.t1),
-      onChanged: onChanged,
-      items: items.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
-    )),
-  );
+  Widget build(BuildContext context) {
+    // Guard: if value isn't in items (e.g. Firestore stored a normalized token),
+    // fall back to first item to avoid the DropdownButton assertion crash.
+    final safe = items.contains(value) ? value : items.first;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+      decoration: BoxDecoration(color: _K.surface, borderRadius: BorderRadius.circular(12), border: Border.all(color: _K.divider), boxShadow: _K.shadow),
+      child: DropdownButtonHideUnderline(child: DropdownButton<String>(
+        value: safe, isExpanded: true,
+        icon: const Icon(Icons.keyboard_arrow_down_rounded, color: _K.t3, size: 18),
+        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: _K.t1),
+        onChanged: onChanged,
+        items: items.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
+      )),
+    );
+  }
 }
 
 class _MiniDrop extends StatelessWidget {

@@ -33,3 +33,6 @@ admin-panel/dist/
 google-services.json
 GoogleService-Info.plist
 firebase/functions/.runtimeconfig.json
+
+# Price server — has its own repo: github.com/Himanshuviyogi/algo-price-server
+price-server/

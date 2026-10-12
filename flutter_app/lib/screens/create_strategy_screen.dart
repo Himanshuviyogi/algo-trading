@@ -2821,52 +2821,44 @@ class _CondRow extends StatelessWidget {
   ];
 
   // ── RHS options depend on what the LHS indicator is ────────────────────────
-  // Returns the dropdown items for the "Compare to" selector.
-  // 'Value' is always first. Indicator options follow only when meaningful.
+  // Returns the list of INDICATOR options for the "vs Indicator" mode.
+  // Empty list = no indicator comparison available (numeric only).
+  // 'Value' is gone — the numeric input is now the default, not a dropdown item.
   static List<String> _rhsOptionsFor(String lhsType, String indicator, String lhsPrice) {
     if (lhsType == 'Price') {
-      // Price field vs Value or trend indicator
-      return ['Value', 'EMA', 'SMA', 'VWAP'];
+      return ['EMA', 'SMA', 'VWAP'];
     }
     switch (indicator) {
-      // Oscillators — only sensible to compare to a numeric value
+      // Oscillators — only numeric makes sense
       case 'RSI':
       case 'Stochastic':
       case 'ADX':
       case 'CCI':
-        return ['Value'];
-
-      // Trend indicators — compare to Value or another MA
-      case 'EMA':
-      case 'SMA':
-        return ['Value', 'EMA', 'SMA'];
-
-      case 'VWAP':
-        return ['Value', 'EMA', 'SMA', 'VWAP'];
-
-      // Volume — compare to a number
-      case 'Volume':
-        return ['Value', 'Volume'];
-
-      // MACD histogram — only numeric
       case 'MACD':
-        return ['Value'];
-
-      // Bollinger / ATR — numeric or EMA
-      case 'Bollinger Bands':
-      case 'ATR':
-      case 'Supertrend':
-        return ['Value', 'EMA', 'SMA'];
-
-      // Options-specific — only numeric comparison makes sense
       case 'Option Premium':
       case 'OI':
       case 'PCR':
       case 'IV / IV Rank':
-        return ['Value'];
+        return [];          // no "vs Indicator" option — hides the toggle
+
+      // Trend indicators — can cross/compare against another MA
+      case 'EMA':
+      case 'SMA':
+        return ['EMA', 'SMA'];
+
+      case 'VWAP':
+        return ['EMA', 'SMA', 'VWAP'];
+
+      case 'Volume':
+        return ['Volume'];
+
+      case 'Bollinger Bands':
+      case 'ATR':
+      case 'Supertrend':
+        return ['EMA', 'SMA'];
 
       default:
-        return ['Value', 'EMA', 'SMA'];
+        return ['EMA', 'SMA'];
     }
   }
 
@@ -2931,14 +2923,13 @@ class _CondRow extends StatelessWidget {
     final safeInd = inds.contains(cond.indicator) ? cond.indicator : inds.first;
     final params  = cond.lhsType == 'Indicator' ? _indParams(safeInd) : <String>[];
 
-    // Compute valid RHS options for this LHS
+    // Compute valid RHS indicator options for this LHS (empty = numeric only)
     final rhsOptions = _rhsOptionsFor(cond.lhsType, safeInd, cond.lhsPrice);
-    // If the stored RHS is no longer valid, snap to 'Value'
-    final currentRhsInd = cond.rhsIsInd ? (cond.valueB.isEmpty ? rhsOptions.firstWhere((o) => o != 'Value', orElse: () => 'Value') : cond.valueB) : 'Value';
-    final safeRhs = rhsOptions.contains(currentRhsInd) ? currentRhsInd : 'Value';
-    if (safeRhs == 'Value' && cond.rhsIsInd) {
-      // snap the model silently — can't call setState from build, mark via flag
+    // If the stored RHS indicator is no longer valid, fall back to numeric mode
+    if (cond.rhsIsInd && (rhsOptions.isEmpty || !rhsOptions.contains(cond.valueB))) {
       cond.rhsIsInd = false;
+      cond.valueB   = '';
+      cond.paramC2  = '';
     }
 
     final isCross     = cond.op == 'Crosses Above' || cond.op == 'Crosses Below';
@@ -2989,7 +2980,7 @@ class _CondRow extends StatelessWidget {
                 // Reset RHS if it's no longer valid for the new indicator
                 final newRhs = _rhsOptionsFor('Indicator', v, '');
                 if (cond.rhsIsInd && !newRhs.contains(cond.valueB)) {
-                  cond.rhsIsInd = false; cond.valueB = '';
+                  cond.rhsIsInd = false; cond.valueB = ''; cond.paramC2 = '';
                 }
                 onChanged?.call(cond);
               }),
@@ -3106,29 +3097,61 @@ class _CondRow extends StatelessWidget {
             const SizedBox(height: 10),
 
             // ── RHS: Compare to ───────────────────────────────────────────────
+            // Default = numeric constant (like QuantMan "Number" field).
+            // Small "vs Indicator" pill lets the user switch to indicator-vs-indicator.
             _SectionLabel('Compare to'),
             const SizedBox(height: 4),
-            Row(children: [
-              // Type selector — only shows options valid for the chosen LHS
-              Expanded(child: _MiniDrop(
-                value: safeRhs,
-                items: rhsOptions,
-                onChanged: (v) {
-                  cond.rhsIsInd = v != 'Value';
-                  cond.valueB   = cond.rhsIsInd ? v! : '';
-                  if (!cond.rhsIsInd) cond.paramC2 = '';
-                  onChanged?.call(cond);
-                },
-              )),
-              const SizedBox(width: 8),
-              if (!cond.rhsIsInd) ...[
-                // Numeric value — hint is indicator-aware
+            if (!cond.rhsIsInd) ...[
+              // ── Numeric constant mode ────────────────────────────────────────
+              Row(children: [
                 Expanded(child: _MiniField(
                   hint: valueHint,
                   initial: cond.valueA,
                   onChanged: (v) { cond.valueA = v; onChanged?.call(cond); },
                 )),
-              ] else ...[
+                // Only show the "vs Indicator" toggle when indicator options exist
+                if (rhsOptions.length > 1) ...[
+                  const SizedBox(width: 8),
+                  GestureDetector(
+                    onTap: () {
+                      // Pick the first available indicator option
+                      final firstInd = rhsOptions.firstWhere((o) => o != 'Value', orElse: () => '');
+                      if (firstInd.isEmpty) return;
+                      cond.rhsIsInd = true;
+                      cond.valueB   = firstInd;
+                      cond.paramC2  = _defaultParam(firstInd, 0);
+                      onChanged?.call(cond);
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: _K.surfaceAlt,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: _K.divider),
+                      ),
+                      child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(Icons.compare_arrows_rounded, size: 13, color: _K.t3),
+                        SizedBox(width: 4),
+                        Text('vs Ind.', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: _K.t3)),
+                      ]),
+                    ),
+                  ),
+                ],
+              ]),
+            ] else ...[
+              // ── Indicator-vs-indicator mode ──────────────────────────────────
+              Row(children: [
+                // RHS indicator name
+                Expanded(child: _MiniDrop(
+                  value: rhsOptions.contains(cond.valueB) ? cond.valueB : (rhsOptions.isNotEmpty ? rhsOptions.first : cond.valueB),
+                  items: rhsOptions,
+                  onChanged: (v) {
+                    cond.valueB  = v!;
+                    cond.paramC2 = _defaultParam(v, 0);
+                    onChanged?.call(cond);
+                  },
+                )),
+                const SizedBox(width: 8),
                 // RHS indicator period
                 Expanded(child: _LabeledMiniField(
                   label: 'Period',
@@ -3136,8 +3159,40 @@ class _CondRow extends StatelessWidget {
                   initial: cond.paramC2,
                   onChanged: (v) { cond.paramC2 = v; onChanged?.call(cond); },
                 )),
-              ],
-            ]),
+                const SizedBox(width: 8),
+                // Back to number mode
+                GestureDetector(
+                  onTap: () {
+                    cond.rhsIsInd = false;
+                    cond.valueB   = '';
+                    cond.paramC2  = '';
+                    onChanged?.call(cond);
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: _K.primaryBg,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: _K.primary.withValues(alpha: 0.3)),
+                    ),
+                    child: const Icon(Icons.tag_rounded, size: 13, color: _K.primary),
+                  ),
+                ),
+              ]),
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(color: _K.primaryBg, borderRadius: BorderRadius.circular(8)),
+                child: Row(children: [
+                  const Icon(Icons.info_outline_rounded, size: 12, color: _K.primary),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Comparing ${cond.indicator} against ${cond.valueB}(${cond.paramC2.isEmpty ? _defaultParam(cond.valueB, 0) : cond.paramC2})',
+                    style: const TextStyle(fontSize: 10, color: _K.primary, height: 1.4),
+                  ),
+                ]),
+              ),
+            ],
           ]),
         ),
       ]),

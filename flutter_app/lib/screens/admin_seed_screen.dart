@@ -307,8 +307,8 @@ const _tempUserStrategies = <_TempUserSeed>[
     tags:            ['bull-call-spread', 'spread', 'technical'],
     description:     'Buy ATM Call + Sell OTM Call (ATM+2). Capped profit & capped risk. RSI > 50 entry.',
     entryConds: [
-      {'indicator': 'RSI', 'operator': '>', 'value_a': '50', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '14', 'param_b': '', 'logic': 'AND'},
-      {'indicator': 'EMA', 'operator': '>', 'value_a': '', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '20', 'param_b': '50', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'RSI', 'lhs_price': 'Close', 'param_a': '14', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '>', 'rhs_is_indicator': false, 'value_a': '50', 'value_b': '', 'rhs_period': '', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'EMA', 'lhs_price': 'Close', 'param_a': '20', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '>', 'rhs_is_indicator': true, 'value_a': '', 'value_b': 'EMA', 'rhs_period': '50', 'logic': 'AND'},
     ],
     legs: [
       {'side': 'Buy',  'option_type': 'Call', 'quantity': 1, 'strike_mode': 'ATM+N', 'strike_n': 0,  'delta': 0.50, 'use_setup_expiry': true, 'expiry': 'Current Week'},
@@ -347,8 +347,8 @@ const _tempUserStrategies = <_TempUserSeed>[
     tags:            ['bear-put-spread', 'spread', 'bearish'],
     description:     'Buy ATM Put + Sell OTM Put (ATM-2). Bearish with capped risk. RSI < 45 entry.',
     entryConds: [
-      {'indicator': 'RSI', 'operator': '<', 'value_a': '45', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '14', 'param_b': '', 'logic': 'AND'},
-      {'indicator': 'EMA', 'operator': '<', 'value_a': '', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '20', 'param_b': '50', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'RSI', 'lhs_price': 'Close', 'param_a': '14', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '<', 'rhs_is_indicator': false, 'value_a': '45', 'value_b': '', 'rhs_period': '', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'EMA', 'lhs_price': 'Close', 'param_a': '20', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '<', 'rhs_is_indicator': true, 'value_a': '', 'value_b': 'EMA', 'rhs_period': '50', 'logic': 'AND'},
     ],
     legs: [
       {'side': 'Buy',  'option_type': 'Put', 'quantity': 1, 'strike_mode': 'ATM+N', 'strike_n': 0,  'delta': 0.50, 'use_setup_expiry': true, 'expiry': 'Current Week'},
@@ -387,8 +387,8 @@ const _tempUserStrategies = <_TempUserSeed>[
     tags:            ['straddle', 'volatility', 'event-play'],
     description:     'Buy ATM Call + Buy ATM Put. Profits from large moves in either direction. Enter when IV 40–70.',
     entryConds: [
-      {'indicator': 'IV / IV Rank', 'operator': '>', 'value_a': '40', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '', 'param_b': '', 'logic': 'AND'},
-      {'indicator': 'IV / IV Rank', 'operator': '<', 'value_a': '70', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '', 'param_b': '', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'IV / IV Rank', 'lhs_price': 'Close', 'param_a': '', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '>', 'rhs_is_indicator': false, 'value_a': '40', 'value_b': '', 'rhs_period': '', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'IV / IV Rank', 'lhs_price': 'Close', 'param_a': '', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '<', 'rhs_is_indicator': false, 'value_a': '70', 'value_b': '', 'rhs_period': '', 'logic': 'AND'},
     ],
     legs: [
       {'side': 'Buy', 'option_type': 'Call', 'quantity': 1, 'strike_mode': 'ATM+N', 'strike_n': 0, 'delta': 0.50, 'use_setup_expiry': true, 'expiry': 'Current Week'},
@@ -427,8 +427,8 @@ const _tempUserStrategies = <_TempUserSeed>[
     tags:            ['strangle', 'volatility', 'technical'],
     description:     'Buy OTM Call (+2) + Buy OTM Put (-2). Cheaper than straddle; needs a bigger move. IV 35–65.',
     entryConds: [
-      {'indicator': 'IV / IV Rank', 'operator': '>', 'value_a': '35', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '', 'param_b': '', 'logic': 'AND'},
-      {'indicator': 'IV / IV Rank', 'operator': '<', 'value_a': '65', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '', 'param_b': '', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'IV / IV Rank', 'lhs_price': 'Close', 'param_a': '', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '>', 'rhs_is_indicator': false, 'value_a': '35', 'value_b': '', 'rhs_period': '', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'IV / IV Rank', 'lhs_price': 'Close', 'param_a': '', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '<', 'rhs_is_indicator': false, 'value_a': '65', 'value_b': '', 'rhs_period': '', 'logic': 'AND'},
     ],
     legs: [
       {'side': 'Buy', 'option_type': 'Call', 'quantity': 1, 'strike_mode': 'ATM+N', 'strike_n':  2, 'delta': 0.30, 'use_setup_expiry': true, 'expiry': 'Current Week'},
@@ -467,7 +467,7 @@ const _tempUserStrategies = <_TempUserSeed>[
     tags:            ['iron-condor', 'selling', 'sideways'],
     description:     'Sell OTM strangle + buy further OTM wings. Profits in low-volatility sideways market. IV > 50.',
     entryConds: [
-      {'indicator': 'IV / IV Rank', 'operator': '>', 'value_a': '50', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '', 'param_b': '', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'IV / IV Rank', 'lhs_price': 'Close', 'param_a': '', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '>', 'rhs_is_indicator': false, 'value_a': '50', 'value_b': '', 'rhs_period': '', 'logic': 'AND'},
     ],
     legs: [
       {'side': 'Buy',  'option_type': 'Put',  'quantity': 1, 'strike_mode': 'ATM+N', 'strike_n': -4, 'delta': 0.10, 'use_setup_expiry': true, 'expiry': 'Current Week'},
@@ -508,8 +508,8 @@ const _tempUserStrategies = <_TempUserSeed>[
     tags:            ['covered-call', 'hedged', 'income'],
     description:     'Long deep ITM call (≈underlying) + Sell OTM call. Income strategy in a confirmed uptrend.',
     entryConds: [
-      {'indicator': 'EMA', 'operator': '>', 'value_a': '', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '20', 'param_b': '50', 'logic': 'AND'},
-      {'indicator': 'RSI', 'operator': '<', 'value_a': '65', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '14', 'param_b': '', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'EMA', 'lhs_price': 'Close', 'param_a': '20', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '>', 'rhs_is_indicator': true, 'value_a': '', 'value_b': 'EMA', 'rhs_period': '50', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'RSI', 'lhs_price': 'Close', 'param_a': '14', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '<', 'rhs_is_indicator': false, 'value_a': '65', 'value_b': '', 'rhs_period': '', 'logic': 'AND'},
     ],
     legs: [
       {'side': 'Buy',  'option_type': 'Call', 'quantity': 1, 'strike_mode': 'ATM+N', 'strike_n': -6, 'delta': 0.90, 'use_setup_expiry': true, 'expiry': 'Current Week'},
@@ -550,8 +550,8 @@ const _tempUserStrategies = <_TempUserSeed>[
     tags:            ['ema-crossover', 'swing', 'momentum'],
     description:     'Buy when RELIANCE LTP crosses above ₹2940 with EMA(20) > EMA(50) and RSI > 55.',
     entryConds: [
-      {'indicator': 'EMA', 'operator': '>', 'value_a': '', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '20', 'param_b': '50', 'logic': 'AND'},
-      {'indicator': 'RSI', 'operator': '>', 'value_a': '55', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '14', 'param_b': '', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'EMA',  'lhs_price': 'Close', 'param_a': '20', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '>', 'rhs_is_indicator': true,  'value_a': '',   'value_b': 'EMA', 'rhs_period': '50', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'RSI',  'lhs_price': 'Close', 'param_a': '14', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '>', 'rhs_is_indicator': false, 'value_a': '55', 'value_b': '',    'rhs_period': '',   'logic': 'AND'},
     ],
     trailingSL:      true,
     trailingSLMode:  'pct',
@@ -586,8 +586,8 @@ const _tempUserStrategies = <_TempUserSeed>[
     tags:            ['vwap', 'intraday', 'mean-reversion'],
     description:     'Enter long when HDFCBANK dips 0.3% below VWAP with reversal candle on 5m. SL below VWAP.',
     entryConds: [
-      {'indicator': 'VWAP', 'operator': '<', 'value_a': '', 'value_b': '', 'rhs_is_indicator': true, 'param_a': '', 'param_b': '', 'logic': 'AND'},
-      {'indicator': 'RSI',  'operator': '>', 'value_a': '45', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '9', 'param_b': '', 'logic': 'AND'},
+      {'lhs_type': 'Price', 'indicator': 'VWAP', 'lhs_price': 'Close', 'param_a': '', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '<', 'rhs_is_indicator': true, 'value_a': '', 'value_b': 'VWAP', 'rhs_period': '', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'RSI', 'lhs_price': 'Close', 'param_a': '9', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '>', 'rhs_is_indicator': false, 'value_a': '45', 'value_b': '', 'rhs_period': '', 'logic': 'AND'},
     ],
     trailingSL:      false,
     autoExecute:     true,
@@ -620,8 +620,8 @@ const _tempUserStrategies = <_TempUserSeed>[
     tags:            ['rsi', 'reversal', 'support-bounce'],
     description:     'RSI(14) < 35 on daily chart at strong support. Enter above ₹1200 on reversal confirmation.',
     entryConds: [
-      {'indicator': 'RSI', 'operator': '<', 'value_a': '35', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '14', 'param_b': '', 'logic': 'AND'},
-      {'indicator': 'EMA', 'operator': '>', 'value_a': '', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '200', 'param_b': '', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'RSI', 'lhs_price': 'Close', 'param_a': '14', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '<', 'rhs_is_indicator': false, 'value_a': '35', 'value_b': '', 'rhs_period': '', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'EMA', 'lhs_price': 'Close', 'param_a': '200', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '>', 'rhs_is_indicator': false, 'value_a': '', 'value_b': '', 'rhs_period': '', 'logic': 'AND'},
     ],
     trailingSL:      false,
     autoExecute:     true,
@@ -654,8 +654,8 @@ const _tempUserStrategies = <_TempUserSeed>[
     tags:            ['breakout', 'momentum', 'volume'],
     description:     'Buy INFY on breakout above ₹1850 resistance with EMA(20) > EMA(50) and RSI > 60.',
     entryConds: [
-      {'indicator': 'EMA', 'operator': '>', 'value_a': '', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '20', 'param_b': '50', 'logic': 'AND'},
-      {'indicator': 'RSI', 'operator': '>', 'value_a': '60', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '14', 'param_b': '', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'EMA', 'lhs_price': 'Close', 'param_a': '20', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '>', 'rhs_is_indicator': true, 'value_a': '', 'value_b': 'EMA', 'rhs_period': '50', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'RSI', 'lhs_price': 'Close', 'param_a': '14', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '>', 'rhs_is_indicator': false, 'value_a': '60', 'value_b': '', 'rhs_period': '', 'logic': 'AND'},
     ],
     trailingSL:      true,
     trailingSLMode:  'pct',
@@ -690,8 +690,8 @@ const _tempUserStrategies = <_TempUserSeed>[
     tags:            ['macd', 'swing', 'momentum'],
     description:     'MACD line crosses above signal line on daily chart. RSI between 50–70. Entry above ₹4200.',
     entryConds: [
-      {'indicator': 'MACD', 'operator': '>', 'value_a': '', 'value_b': '', 'rhs_is_indicator': true, 'param_a': '12', 'param_b': '26', 'logic': 'AND'},
-      {'indicator': 'RSI',  'operator': '>', 'value_a': '50', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '14', 'param_b': '', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'MACD', 'lhs_price': 'Close', 'param_a': '12', 'param_b': '26', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '>', 'rhs_is_indicator': false, 'value_a': '0', 'value_b': '', 'rhs_period': '', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'RSI', 'lhs_price': 'Close', 'param_a': '14', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '>', 'rhs_is_indicator': false, 'value_a': '50', 'value_b': '', 'rhs_period': '', 'logic': 'AND'},
     ],
     trailingSL:      false,
     autoExecute:     true,
@@ -724,8 +724,8 @@ const _tempUserStrategies = <_TempUserSeed>[
     tags:            ['bollinger-band', 'breakout', 'volatility'],
     description:     'Enter when WIPRO breaks above upper Bollinger Band with volume surge. RSI > 55 confirmation.',
     entryConds: [
-      {'indicator': 'Bollinger Bands', 'operator': '>', 'value_a': '', 'value_b': '', 'rhs_is_indicator': true, 'param_a': '20', 'param_b': '2', 'logic': 'AND'},
-      {'indicator': 'RSI', 'operator': '>', 'value_a': '55', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '14', 'param_b': '', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'Bollinger Bands', 'lhs_price': 'Close', 'param_a': '20', 'param_b': '2', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '>', 'rhs_is_indicator': false, 'value_a': '', 'value_b': '', 'rhs_period': '', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'RSI', 'lhs_price': 'Close', 'param_a': '14', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '>', 'rhs_is_indicator': false, 'value_a': '55', 'value_b': '', 'rhs_period': '', 'logic': 'AND'},
     ],
     trailingSL:      true,
     trailingSLMode:  'pct',
@@ -760,8 +760,8 @@ const _tempUserStrategies = <_TempUserSeed>[
     tags:            ['supertrend', 'momentum', 'technical'],
     description:     'Supertrend flips bullish on daily chart. EMA(20) > EMA(50). Enter at market on signal candle close.',
     entryConds: [
-      {'indicator': 'Supertrend', 'operator': '>', 'value_a': '', 'value_b': '', 'rhs_is_indicator': true, 'param_a': '7', 'param_b': '3', 'logic': 'AND'},
-      {'indicator': 'EMA', 'operator': '>', 'value_a': '', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '20', 'param_b': '50', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'Supertrend', 'lhs_price': 'Close', 'param_a': '7', 'param_b': '3', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '>', 'rhs_is_indicator': false, 'value_a': '0', 'value_b': '', 'rhs_period': '', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'EMA', 'lhs_price': 'Close', 'param_a': '20', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '>', 'rhs_is_indicator': true, 'value_a': '', 'value_b': 'EMA', 'rhs_period': '50', 'logic': 'AND'},
     ],
     trailingSL:      true,
     trailingSLMode:  'pct',
@@ -796,8 +796,8 @@ const _tempUserStrategies = <_TempUserSeed>[
     tags:            ['rsi', 'overbought', 'short', 'intraday'],
     description:     'Short AXISBANK when RSI > 75 and price breaks below ₹1150 support. Intraday MIS.',
     entryConds: [
-      {'indicator': 'RSI', 'operator': '>', 'value_a': '75', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '14', 'param_b': '', 'logic': 'AND'},
-      {'indicator': 'EMA', 'operator': '<', 'value_a': '', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '9',  'param_b': '21', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'RSI', 'lhs_price': 'Close', 'param_a': '14', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '>', 'rhs_is_indicator': false, 'value_a': '75', 'value_b': '', 'rhs_period': '', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'EMA', 'lhs_price': 'Close', 'param_a': '9', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '<', 'rhs_is_indicator': true, 'value_a': '', 'value_b': 'EMA', 'rhs_period': '21', 'logic': 'AND'},
     ],
     trailingSL:      false,
     autoExecute:     true,
@@ -830,8 +830,8 @@ const _tempUserStrategies = <_TempUserSeed>[
     tags:            ['orb', 'intraday', 'breakout'],
     description:     'Buy when SBIN breaks above first 15-min candle high (ORB) with EMA(9) > EMA(21). Intraday MIS.',
     entryConds: [
-      {'indicator': 'EMA', 'operator': '>', 'value_a': '', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '9', 'param_b': '21', 'logic': 'AND'},
-      {'indicator': 'RSI', 'operator': '>', 'value_a': '55', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '14', 'param_b': '', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'EMA', 'lhs_price': 'Close', 'param_a': '9', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '>', 'rhs_is_indicator': true, 'value_a': '', 'value_b': 'EMA', 'rhs_period': '21', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'RSI', 'lhs_price': 'Close', 'param_a': '14', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '>', 'rhs_is_indicator': false, 'value_a': '55', 'value_b': '', 'rhs_period': '', 'logic': 'AND'},
     ],
     trailingSL:      false,
     autoExecute:     true,
@@ -864,8 +864,8 @@ const _tempUserStrategies = <_TempUserSeed>[
     tags:            ['positional', 'delivery', 'weekly'],
     description:     'Buy MARUTI on weekly breakout above ₹12500. EMA(20) > EMA(50) on weekly. Hold 4–6 weeks.',
     entryConds: [
-      {'indicator': 'EMA', 'operator': '>', 'value_a': '', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '20', 'param_b': '50', 'logic': 'AND'},
-      {'indicator': 'RSI', 'operator': '>', 'value_a': '55', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '14', 'param_b': '', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'EMA', 'lhs_price': 'Close', 'param_a': '20', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '>', 'rhs_is_indicator': true, 'value_a': '', 'value_b': 'EMA', 'rhs_period': '50', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'RSI', 'lhs_price': 'Close', 'param_a': '14', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '>', 'rhs_is_indicator': false, 'value_a': '55', 'value_b': '', 'rhs_period': '', 'logic': 'AND'},
     ],
     trailingSL:      true,
     trailingSLMode:  'pct',
@@ -900,8 +900,8 @@ const _tempUserStrategies = <_TempUserSeed>[
     tags:            ['ema', 'rsi', 'swing', 'auto'],
     description:     'Buy TATAMOTORS when 9-EMA crosses above 21-EMA on daily with RSI > 55. Swing 1–2 weeks.',
     entryConds: [
-      {'indicator': 'EMA', 'operator': '>', 'value_a': '', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '9',  'param_b': '21', 'logic': 'AND'},
-      {'indicator': 'RSI', 'operator': '>', 'value_a': '55', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '14', 'param_b': '', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'EMA', 'lhs_price': 'Close', 'param_a': '9', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '>', 'rhs_is_indicator': true, 'value_a': '', 'value_b': 'EMA', 'rhs_period': '21', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'RSI', 'lhs_price': 'Close', 'param_a': '14', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '>', 'rhs_is_indicator': false, 'value_a': '55', 'value_b': '', 'rhs_period': '', 'logic': 'AND'},
     ],
     trailingSL:      true,
     trailingSLMode:  'pct',
@@ -936,8 +936,8 @@ const _tempUserStrategies = <_TempUserSeed>[
     tags:            ['stochastic', 'oversold', 'reversal'],
     description:     'Stochastic %K < 20 (oversold) on daily, then crosses above %D. RSI < 40. Enter at ₹1700 bounce.',
     entryConds: [
-      {'indicator': 'RSI', 'operator': '<', 'value_a': '40', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '14', 'param_b': '', 'logic': 'AND'},
-      {'indicator': 'EMA', 'operator': '>', 'value_a': '', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '200', 'param_b': '', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'RSI', 'lhs_price': 'Close', 'param_a': '14', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '<', 'rhs_is_indicator': false, 'value_a': '40', 'value_b': '', 'rhs_period': '', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'EMA', 'lhs_price': 'Close', 'param_a': '200', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '>', 'rhs_is_indicator': false, 'value_a': '', 'value_b': '', 'rhs_period': '', 'logic': 'AND'},
     ],
     trailingSL:      false,
     autoExecute:     true,
@@ -970,8 +970,8 @@ const _tempUserStrategies = <_TempUserSeed>[
     tags:            ['short', 'breakdown', 'intraday'],
     description:     'Short ULTRACEMCO on breakdown below ₹10800 support. EMA(9) < EMA(21) on 15m. MIS intraday.',
     entryConds: [
-      {'indicator': 'EMA', 'operator': '<', 'value_a': '', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '9',  'param_b': '21', 'logic': 'AND'},
-      {'indicator': 'RSI', 'operator': '<', 'value_a': '45', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '14', 'param_b': '', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'EMA', 'lhs_price': 'Close', 'param_a': '9', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '<', 'rhs_is_indicator': true, 'value_a': '', 'value_b': 'EMA', 'rhs_period': '21', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'RSI', 'lhs_price': 'Close', 'param_a': '14', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '<', 'rhs_is_indicator': false, 'value_a': '45', 'value_b': '', 'rhs_period': '', 'logic': 'AND'},
     ],
     trailingSL:      false,
     autoExecute:     true,
@@ -1004,8 +1004,8 @@ const _tempUserStrategies = <_TempUserSeed>[
     tags:            ['200dma', 'positional', 'delivery', 'FMCG'],
     description:     'Buy HINDUNILVR at 200-DMA bounce with price above EMA(200). RSI < 45 confirms oversold dip.',
     entryConds: [
-      {'indicator': 'RSI', 'operator': '<', 'value_a': '45', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '14', 'param_b': '', 'logic': 'AND'},
-      {'indicator': 'EMA', 'operator': '>', 'value_a': '', 'value_b': '', 'rhs_is_indicator': false, 'param_a': '200', 'param_b': '', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'RSI', 'lhs_price': 'Close', 'param_a': '14', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '<', 'rhs_is_indicator': false, 'value_a': '45', 'value_b': '', 'rhs_period': '', 'logic': 'AND'},
+      {'lhs_type': 'Indicator', 'indicator': 'EMA', 'lhs_price': 'Close', 'param_a': '200', 'param_b': '', 'param_c': '', 'candle_src': 'Current Candle', 'timeframe': '', 'operator': '>', 'rhs_is_indicator': false, 'value_a': '', 'value_b': '', 'rhs_period': '', 'logic': 'AND'},
     ],
     trailingSL:      true,
     trailingSLMode:  'pct',

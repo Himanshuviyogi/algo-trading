@@ -173,8 +173,9 @@ class _Condition {
   // ── Operator ─────────────────────────────────────────────────────────────
   String op;
   // ── RHS ──────────────────────────────────────────────────────────────────
+  bool   rhsNone;     // true = no RHS comparison (signal-based: Supertrend, MACD signal etc.)
   bool   rhsIsInd;    // true = compare against another indicator
-  String valueA;      // numeric constant when rhsIsInd == false
+  String valueA;      // numeric constant when rhsIsInd == false && rhsNone == false
   String valueB;      // RHS indicator name when rhsIsInd == true
   String paramC2;     // RHS indicator period when rhsIsInd == true
   // ── Logic gate to next row ────────────────────────────────────────────────
@@ -190,6 +191,7 @@ class _Condition {
     this.candleSrc = 'Current Candle',
     this.timeframe = '',
     this.op        = '>',
+    this.rhsNone   = false,
     this.rhsIsInd  = false,
     this.valueA    = '',
     this.valueB    = '',
@@ -207,6 +209,7 @@ class _Condition {
     'candle_src':        candleSrc,
     'timeframe':         timeframe,
     'operator':          op,
+    'rhs_none':          rhsNone,
     'rhs_is_indicator':  rhsIsInd,
     'value_a':           valueA,
     'value_b':           valueB,
@@ -651,12 +654,12 @@ class _CSS extends State<CreateStrategyScreen> {
             candleSrc: m['candle_src']       as String? ?? 'Current Candle',
             timeframe: m['timeframe']        as String? ?? '',
             op:        m['operator']         as String? ?? '>',
+            rhsNone:   m['rhs_none']         as bool?   ?? false,
             rhsIsInd:  m['rhs_is_indicator'] as bool?   ?? false,
             valueA:    m['value_a']          as String? ?? '',
             valueB:    m['value_b']          as String? ?? '',
             paramC2:   m['rhs_period']       as String? ?? '',
-            logic:     m['logic']            as String? ?? 'AND',
-          )));
+            logic:     m['logic']            as String? ?? 'AND',          )));
       }
       loadConds('entry_conditions',  _entryConds);
       loadConds('exit_conditions',   _exitConds);
@@ -862,6 +865,7 @@ class _CSS extends State<CreateStrategyScreen> {
             candleSrc: c.candleSrc,
             timeframe: c.timeframe,
             op:        c.op,
+            rhsNone:   c.rhsNone,
             rhsIsInd:  c.rhsIsInd,
             valueA:    c.valueA,
             valueB:    c.valueB,
@@ -1068,7 +1072,7 @@ class _CSS extends State<CreateStrategyScreen> {
     if (_stratType == _StratType.options && _underlying.isNotEmpty) score += 20;
     if (_stratType == _StratType.stocks  && _stockSymbol.isNotEmpty) score += 20;
     // At least 1 entry condition with a value
-    if (_entryConds.isNotEmpty && _entryConds.any((c) => c.valueA.isNotEmpty || c.rhsIsInd)) score += 20;
+    if (_entryConds.isNotEmpty && _entryConds.any((c) => c.valueA.isNotEmpty || c.rhsIsInd || c.rhsNone)) score += 20;
     // Legs / position filled
     if (_stratType == _StratType.options && _legs.isNotEmpty) score += 20;
     if (_stratType == _StratType.stocks  && _stockSymbol.isNotEmpty) score += 20;
@@ -1088,7 +1092,7 @@ class _CSS extends State<CreateStrategyScreen> {
         if (hasInstrument) return 'partial';
         return 'empty';
       case 'conditions':
-        if (_entryConds.any((c) => c.valueA.isNotEmpty || c.rhsIsInd)) return 'done';
+        if (_entryConds.any((c) => c.valueA.isNotEmpty || c.rhsIsInd || c.rhsNone)) return 'done';
         if (_entryConds.isNotEmpty) return 'partial';
         return 'empty';
       case 'legs':
@@ -2863,43 +2867,70 @@ class _CondRow extends StatelessWidget {
 
   // ── RHS options depend on what the LHS indicator is ────────────────────────
   // Returns the list of INDICATOR options for the "vs Indicator" mode.
-  // Empty list = no indicator comparison available (numeric only).
+  // Empty list = numeric-only (no indicator comparison available).
   // 'Value' is gone — the numeric input is now the default, not a dropdown item.
   static List<String> _rhsOptionsFor(String lhsType, String indicator, String lhsPrice) {
     if (lhsType == 'Price') {
-      return ['EMA', 'SMA', 'VWAP'];
+      // Price vs trend indicator or another price level
+      return ['EMA', 'SMA', 'VWAP', 'WMA', 'Bollinger Bands'];
     }
     switch (indicator) {
-      // Oscillators — only numeric makes sense
+      // Oscillators — numeric only, no indicator comparison makes sense
       case 'RSI':
       case 'Stochastic':
       case 'ADX':
       case 'CCI':
-      case 'MACD':
-      case 'Option Premium':
       case 'OI':
       case 'PCR':
       case 'IV / IV Rank':
-        return [];          // no "vs Indicator" option — hides the toggle
+      case 'Option Premium':
+        return [];
 
-      // Trend indicators — can cross/compare against another MA
+      // MACD — compare to 0 (zero line) or signal line (handled via paramC)
+      case 'MACD':
+        return [];
+
+      // Trend / MA indicators — can cross/compare against other MAs
       case 'EMA':
       case 'SMA':
-        return ['EMA', 'SMA'];
+      case 'WMA':
+        return ['EMA', 'SMA', 'WMA', 'VWAP'];
 
       case 'VWAP':
         return ['EMA', 'SMA', 'VWAP'];
 
       case 'Volume':
-        return ['Volume'];
+        return ['EMA', 'Volume'];   // EMA of volume is a common filter
 
       case 'Bollinger Bands':
+        return ['EMA', 'SMA'];      // compare band to an MA
+
       case 'ATR':
+        return ['EMA', 'SMA'];      // smoothed ATR comparison
+
+      // Signal-based — these have their own direction signal built-in
+      // (rhsNone mode is more appropriate for these)
       case 'Supertrend':
-        return ['EMA', 'SMA'];
+        return [];
 
       default:
-        return ['EMA', 'SMA'];
+        return ['EMA', 'SMA', 'VWAP'];
+    }
+  }
+
+  // ── Whether "signal only" (no RHS) makes sense for this indicator ──────────
+  // When true, the UI shows a "Signal only" button option letting the user
+  // opt out of any numeric/indicator comparison.
+  static bool _supportsRhsNone(String lhsType, String indicator) {
+    if (lhsType == 'Price') return false;
+    switch (indicator) {
+      case 'Supertrend':  // bullish/bearish signal direction
+      case 'MACD':        // MACD > 0 (above zero) vs MACD < 0
+      case 'ADX':         // strong trend present (ADX > threshold implied)
+      case 'Volume':      // high volume bar (above average)
+        return true;
+      default:
+        return false;
     }
   }
 
@@ -2934,6 +2965,7 @@ class _CondRow extends StatelessWidget {
     const defaults = <String, List<String>>{
       'EMA':             ['20', '50', ''],    // single period; '50' used when comparing EMA vs EMA
       'SMA':             ['20', '50', ''],
+      'WMA':             ['20', '50', ''],
       'RSI':             ['14', '', ''],
       'MACD':            ['12', '26', '9'],   // Fast=12, Slow=26, Signal=9
       'Bollinger Bands': ['20', '2', ''],     // Period=20, Std Dev=2
@@ -2965,12 +2997,18 @@ class _CondRow extends StatelessWidget {
     final params  = cond.lhsType == 'Indicator' ? _indParams(safeInd) : <String>[];
 
     // Compute valid RHS indicator options for this LHS (empty = numeric only)
-    final rhsOptions = _rhsOptionsFor(cond.lhsType, safeInd, cond.lhsPrice);
+    final rhsOptions    = _rhsOptionsFor(cond.lhsType, safeInd, cond.lhsPrice);
+    final canSignalOnly = _supportsRhsNone(cond.lhsType, safeInd);
+
     // If the stored RHS indicator is no longer valid, fall back to numeric mode
     if (cond.rhsIsInd && (rhsOptions.isEmpty || !rhsOptions.contains(cond.valueB))) {
       cond.rhsIsInd = false;
       cond.valueB   = '';
       cond.paramC2  = '';
+    }
+    // If rhsNone was stored but this indicator doesn't support it, clear it
+    if (cond.rhsNone && !canSignalOnly) {
+      cond.rhsNone = false;
     }
 
     final isCross     = cond.op == 'Crosses Above' || cond.op == 'Crosses Below';
@@ -3022,6 +3060,10 @@ class _CondRow extends StatelessWidget {
                 final newRhs = _rhsOptionsFor('Indicator', v, '');
                 if (cond.rhsIsInd && !newRhs.contains(cond.valueB)) {
                   cond.rhsIsInd = false; cond.valueB = ''; cond.paramC2 = '';
+                }
+                // Reset rhsNone if new indicator doesn't support it
+                if (cond.rhsNone && !_supportsRhsNone('Indicator', v)) {
+                  cond.rhsNone = false;
                 }
                 onChanged?.call(cond);
               }),
@@ -3138,87 +3180,109 @@ class _CondRow extends StatelessWidget {
             const SizedBox(height: 10),
 
             // ── RHS: Compare to ───────────────────────────────────────────────
-            // Default = numeric constant (like QuantMan "Number" field).
-            // Small "vs Indicator" pill lets the user switch to indicator-vs-indicator.
+            // Three modes:
+            //   • Value    — numeric constant input (default)
+            //   • Indicator — compare against another indicator
+            //   • None     — signal-only (Supertrend bullish, MACD above zero, etc.)
             _SectionLabel('Compare to'),
-            const SizedBox(height: 4),
-            if (!cond.rhsIsInd) ...[
-              // ── Numeric constant mode ────────────────────────────────────────
-              Row(children: [
-                Expanded(child: _MiniField(
-                  hint: valueHint,
-                  initial: cond.valueA,
-                  onChanged: (v) { cond.valueA = v; onChanged?.call(cond); },
-                )),
-                // Only show the "vs Indicator" toggle when indicator options exist
-                if (rhsOptions.length > 1) ...[
-                  const SizedBox(width: 8),
-                  GestureDetector(
-                    onTap: () {
-                      // Pick the first available indicator option
-                      final firstInd = rhsOptions.firstWhere((o) => o != 'Value', orElse: () => '');
-                      if (firstInd.isEmpty) return;
-                      cond.rhsIsInd = true;
-                      cond.valueB   = firstInd;
-                      cond.paramC2  = _defaultParam(firstInd, 0);
-                      onChanged?.call(cond);
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: _K.surfaceAlt,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: _K.divider),
-                      ),
-                      child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                        Icon(Icons.compare_arrows_rounded, size: 13, color: _K.t3),
-                        SizedBox(width: 4),
-                        Text('vs Ind.', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: _K.t3)),
-                      ]),
-                    ),
-                  ),
-                ],
-              ]),
-            ] else ...[
-              // ── Indicator-vs-indicator mode ──────────────────────────────────
-              Row(children: [
-                // RHS indicator name
-                Expanded(child: _MiniDrop(
-                  value: rhsOptions.contains(cond.valueB) ? cond.valueB : (rhsOptions.isNotEmpty ? rhsOptions.first : cond.valueB),
-                  items: rhsOptions,
-                  onChanged: (v) {
-                    cond.valueB  = v!;
-                    cond.paramC2 = _defaultParam(v, 0);
+            const SizedBox(height: 6),
+            // Mode selector row — three compact pills
+            Row(children: [
+              _RhsModePill(
+                label: '123 Value',
+                active: !cond.rhsNone && !cond.rhsIsInd,
+                onTap: () {
+                  cond.rhsNone  = false;
+                  cond.rhsIsInd = false;
+                  cond.valueB   = '';
+                  cond.paramC2  = '';
+                  onChanged?.call(cond);
+                },
+              ),
+              const SizedBox(width: 6),
+              if (rhsOptions.isNotEmpty) ...[
+                _RhsModePill(
+                  label: '⇄ Indicator',
+                  active: !cond.rhsNone && cond.rhsIsInd,
+                  onTap: () {
+                    cond.rhsNone  = false;
+                    cond.rhsIsInd = true;
+                    cond.valueB   = cond.valueB.isNotEmpty && rhsOptions.contains(cond.valueB)
+                        ? cond.valueB : rhsOptions.first;
+                    cond.paramC2  = _defaultParam(cond.valueB, 0);
                     onChanged?.call(cond);
                   },
-                )),
-                const SizedBox(width: 8),
-                // RHS indicator period
-                Expanded(child: _LabeledMiniField(
-                  label: 'Period',
-                  hint: _defaultParam(cond.valueB, 0).isEmpty ? '20' : _defaultParam(cond.valueB, 0),
-                  initial: cond.paramC2,
-                  onChanged: (v) { cond.paramC2 = v; onChanged?.call(cond); },
-                )),
-                const SizedBox(width: 8),
-                // Back to number mode
-                GestureDetector(
+                ),
+                const SizedBox(width: 6),
+              ],
+              if (canSignalOnly)
+                _RhsModePill(
+                  label: '⚡ Signal',
+                  active: cond.rhsNone,
                   onTap: () {
+                    cond.rhsNone  = true;
                     cond.rhsIsInd = false;
+                    cond.valueA   = '';
                     cond.valueB   = '';
                     cond.paramC2  = '';
                     onChanged?.call(cond);
                   },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: _K.primaryBg,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: _K.primary.withValues(alpha: 0.3)),
-                    ),
-                    child: const Icon(Icons.tag_rounded, size: 13, color: _K.primary),
-                  ),
                 ),
+            ]),
+            const SizedBox(height: 8),
+
+            // ── Mode content ──────────────────────────────────────────────────
+            if (cond.rhsNone) ...[
+              // Signal-only: show info about what the signal means
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: _K.primaryBg,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(children: [
+                  const Icon(Icons.electric_bolt_rounded, size: 13, color: _K.primary),
+                  const SizedBox(width: 6),
+                  Expanded(child: Text(
+                    _signalDescription(safeInd),
+                    style: const TextStyle(fontSize: 11, color: _K.primary, height: 1.4),
+                  )),
+                ]),
+              ),
+            ] else if (!cond.rhsIsInd) ...[
+              // Numeric value input
+              _MiniField(
+                hint: valueHint,
+                initial: cond.valueA,
+                onChanged: (v) { cond.valueA = v; onChanged?.call(cond); },
+              ),
+            ] else ...[
+              // Indicator-vs-indicator: name dropdown + period field
+              Row(children: [
+                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  _SectionLabel('Indicator'),
+                  const SizedBox(height: 4),
+                  _MiniDrop(
+                    value: rhsOptions.contains(cond.valueB) ? cond.valueB : rhsOptions.first,
+                    items: rhsOptions,
+                    onChanged: (v) {
+                      cond.valueB  = v!;
+                      cond.paramC2 = _defaultParam(v, 0);
+                      onChanged?.call(cond);
+                    },
+                  ),
+                ])),
+                const SizedBox(width: 8),
+                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  _SectionLabel('Period'),
+                  const SizedBox(height: 4),
+                  _MiniField(
+                    hint: _defaultParam(cond.valueB.isEmpty ? (rhsOptions.isNotEmpty ? rhsOptions.first : '') : cond.valueB, 0).isEmpty ? '20'
+                        : _defaultParam(cond.valueB.isEmpty ? rhsOptions.first : cond.valueB, 0),
+                    initial: cond.paramC2,
+                    onChanged: (v) { cond.paramC2 = v; onChanged?.call(cond); },
+                  ),
+                ])),
               ]),
               const SizedBox(height: 6),
               Container(
@@ -3227,10 +3291,11 @@ class _CondRow extends StatelessWidget {
                 child: Row(children: [
                   const Icon(Icons.info_outline_rounded, size: 12, color: _K.primary),
                   const SizedBox(width: 6),
-                  Text(
-                    'Comparing ${cond.indicator} against ${cond.valueB}(${cond.paramC2.isEmpty ? _defaultParam(cond.valueB, 0) : cond.paramC2})',
+                  Expanded(child: Text(
+                    'Comparing ${cond.lhsType == 'Price' ? cond.lhsPrice : cond.indicator} against '
+                    '${cond.valueB}(${cond.paramC2.isEmpty ? _defaultParam(cond.valueB, 0) : cond.paramC2})',
                     style: const TextStyle(fontSize: 10, color: _K.primary, height: 1.4),
-                  ),
+                  )),
                 ]),
               ),
             ],
@@ -3242,10 +3307,51 @@ class _CondRow extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// RHS mode pill — Value / Indicator / Signal selector
+// ─────────────────────────────────────────────────────────────────────────────
+class _RhsModePill extends StatelessWidget {
+  const _RhsModePill({required this.label, required this.active, required this.onTap});
+  final String label; final bool active; final VoidCallback onTap;
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+    onTap: onTap,
+    child: AnimatedContainer(
+      duration: const Duration(milliseconds: 130),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: active ? _K.primary : _K.surfaceAlt,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: active ? _K.primary : _K.divider),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          color: active ? Colors.white : _K.t2,
+        ),
+      ),
+    ),
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Signal description for rhsNone mode
+// ─────────────────────────────────────────────────────────────────────────────
+String _signalDescription(String indicator) {
+  switch (indicator) {
+    case 'Supertrend': return 'Condition fires when Supertrend is bullish (price above Supertrend line). No numeric threshold needed.';
+    case 'MACD':       return 'Condition fires when MACD line is above zero (bullish momentum). Use > with Value 0 for the same effect.';
+    case 'ADX':        return 'Condition fires when a strong trend is detected (ADX > 25 implied). No threshold needed.';
+    case 'Volume':     return 'Condition fires when volume is above average. No specific threshold needed.';
+    default:           return 'Signal fires based on the indicator\'s direction — no numeric comparison required.';
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Small helper: section label inside a condition card
 // ─────────────────────────────────────────────────────────────────────────────
-class _SectionLabel extends StatelessWidget {
-  const _SectionLabel(this.text);
+class _SectionLabel extends StatelessWidget {  const _SectionLabel(this.text);
   final String text;
   @override
   Widget build(BuildContext context) =>

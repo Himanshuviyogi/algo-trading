@@ -275,10 +275,13 @@ async function writeOrderDoc(
     triggerPrice?: number;
     productType?: string;
     validity?: string;
+    paperTrade?: boolean;
   }
 ): Promise<void> {
   const db = getFirestore();
   const now = Timestamp.now();
+  // Use merge:true so we don't wipe the paper_trade:true field that
+  // orderExecutor.js already wrote via update() on the same doc.
   await db.collection("orders").doc(orderId).set({
     // strategy_id replaces signal_id for user-created orders
     strategy_id:      params.strategyId,
@@ -297,9 +300,10 @@ async function writeOrderDoc(
     status:           params.status,
     rejection_reason: params.rejectionReason ?? null,
     order_role:       params.orderRole ?? "entry",
+    paper_trade:      params.paperTrade ?? false,
     placed_at:        now,
     updated_at:       now,
-  });
+  }, { merge: true });
 }
 
 async function getRiskConfig(): Promise<{
@@ -872,6 +876,20 @@ export const onStrategyEntryCheck = onSchedule(
           continue;
         }
 
+        // ── MIS entry cutoff — no new intraday positions after 15:00 IST ──
+        // 15:00 IST = 09:30 UTC. Opening MIS past this point risks broker
+        // auto-squareoff before the user's target/SL is reached.
+        const MIS_ENTRY_CUTOFF_UTC = 9 * 60 + 30; // 15:00 IST
+        const isMISEntry = (w.strategy.product_type ?? "CNC").toUpperCase() === "MIS";
+        if (isMISEntry && utcMins >= MIS_ENTRY_CUTOFF_UTC) {
+          console.log(
+            `[EntryCheck] ${w.userId}/${w.docRef.id}: MIS strategy — past 15:00 IST entry cutoff. ` +
+            `Strategy will not enter today; resetting to watching for tomorrow.`
+          );
+          skippedCount++;
+          continue;
+        }
+
         // Check broker credentials
         // In paper trading mode, skip broker credential check entirely —
         // the price server will simulate the order without needing a session.
@@ -992,6 +1010,7 @@ export const onStrategyEntryCheck = onSchedule(
           orderRole: "entry",
           productType,
           validity,
+          paperTrade: isStrategyPaper,
           ...(triggerPrice !== undefined && { triggerPrice }),
         });
 
@@ -1252,6 +1271,121 @@ export const onPositionMonitor = onSchedule(
         }
       }
 
+      // ── MIS auto-squareoff check ──────────────────────────────────────
+      // Angel One auto-squares MIS positions at ~15:20 IST (09:50 UTC).
+      // We proactively exit at 15:15 IST (09:45 UTC) to avoid broker
+      // auto-squareoff at potentially worse slippage.
+      // MIS_SQUAREOFF_UTC = 9h 45m = 585 minutes
+      const MIS_SQUAREOFF_UTC = 9 * 60 + 45;
+      const isMIS = (pos.data.product_type ?? "CNC").toUpperCase() === "MIS";
+      if (isMIS && utcMins >= MIS_SQUAREOFF_UTC) {
+        console.log(
+          `[PositionMonitor] MIS squareoff triggered for ${pos.userId}/${pos.docRef.id} ` +
+          `(${symbol} @ ₹${ltp}) — past 15:15 IST cutoff.`
+        );
+
+        try {
+          const isPosStrategyPaper = risk.paper_trading || (pos.data.paper_trade === true);
+          let brokerReady = isPosStrategyPaper;
+          if (!brokerReady) {
+            const creds = await getBrokerCredentials(pos.userId);
+            brokerReady = !!(creds?.is_connected);
+          }
+
+          const exitAction      = isBuy ? "SELL" : "BUY";
+          const exchange        = pos.data.stock?.exchange ?? "NSE";
+          const strategyId      = pos.docRef.id;
+          const qty             = pos.data.entry_qty ?? pos.data.quantity ?? 1;
+          const entryLtp        = pos.data.entry_ltp ?? pos.data.trade?.entry_price ?? ltp;
+
+          if (brokerReady) {
+            const misResult = await callPlaceOrder({
+              userId:      pos.userId,
+              strategyId,
+              symbol,
+              exchange,
+              action:      exitAction,
+              orderType:   "MARKET",
+              quantity:    qty,
+              price:       ltp,
+              productType: "MIS",
+              validity:    "DAY",
+              paperTrade:  isPosStrategyPaper,
+            });
+
+            await writeOrderDoc(misResult.firestoreOrderId, {
+              strategyId, userId: pos.userId, symbol, exchange,
+              action: exitAction, orderType: "MARKET", quantity: qty, price: ltp,
+              angelOrderId: misResult.angelOrderId, status: misResult.status,
+              orderRole:   "exit",
+              productType: "MIS",
+              validity:    "DAY",
+              paperTrade:  isPosStrategyPaper,
+            });
+          }
+
+          // P&L calculation
+          const pnlRs  = isBuy
+            ? (ltp - entryLtp) * qty
+            : (entryLtp - ltp) * qty;
+          const pnlPct = entryLtp > 0 ? (pnlRs / (entryLtp * qty)) * 100 : 0;
+
+          await pos.docRef.update({
+            status:                "closed",
+            exit_reason:           "mis_squareoff",
+            exit_ltp:              ltp,
+            exited_at:             FieldValue.serverTimestamp(),
+            realised_pnl_rs:       pnlRs,
+            realised_pnl_pct:      pnlPct,
+            "trade.exit_price":    ltp,
+            "trade.current_price": ltp,
+            "meta.updated_at":     FieldValue.serverTimestamp(),
+          });
+
+          // FCM notification
+          const stockName = pos.data.stock?.name ?? symbol;
+          const isProfit  = pnlRs >= 0;
+          const sqTitle   = `${isPosStrategyPaper ? "📄 Paper " : "🕐 "}Intraday Closed: ${symbol}`;
+          const sqBody    = `MIS position squared off before market close · ${qty} × ${stockName} @ ₹${ltp.toFixed(2)} · P&L: ${isProfit ? "+" : ""}₹${pnlRs.toFixed(2)} (${pnlPct.toFixed(2)}%)`;
+
+          const token = await getUserFcmToken(pos.userId);
+          if (token) {
+            await sendToDevice(token, sqTitle, sqBody, {
+              type:        "mis_squareoff",
+              strategy_id: strategyId,
+              symbol,
+              pnl:         pnlRs.toFixed(2),
+            });
+          }
+          await _persistNotification({
+            userId:     pos.userId,
+            title:      sqTitle,
+            body:       sqBody,
+            type:       "mis_squareoff",
+            strategyId,
+            symbol,
+            pnl:        pnlRs,
+          });
+
+          closedCount++;
+        } catch (err) {
+          console.error(
+            `[PositionMonitor] MIS squareoff error for ${pos.userId}/${pos.docRef.id}:`,
+            err instanceof Error ? err.message : err
+          );
+          // Mark closed anyway — broker will auto-squareoff, don't keep retrying
+          await pos.docRef.update({
+            status:            "closed",
+            exit_reason:       "mis_squareoff",
+            exit_ltp:          ltp,
+            exited_at:         FieldValue.serverTimestamp(),
+            "meta.updated_at": FieldValue.serverTimestamp(),
+          });
+          closedCount++;
+        }
+        continue;
+      }
+
       // Determine exit condition
       let exitReason: "target_hit" | "sl_hit" | null = null;
       if (target > 0) {
@@ -1358,6 +1492,7 @@ export const onPositionMonitor = onSchedule(
           orderRole: "exit",
           productType: exitProductType,
           validity:    exitValidity,
+          paperTrade:  isPosStrategyPaper,
         });
 
         // Calculate realised P&L

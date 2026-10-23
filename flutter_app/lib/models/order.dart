@@ -48,6 +48,7 @@ class AlgoOrder extends Equatable {
     this.rejectionReason,
     required this.placedAt,
     required this.updatedAt,
+    this.paperTrade = false,
   });
 
   final String id;
@@ -77,6 +78,9 @@ class AlgoOrder extends Equatable {
   final DateTime placedAt;
   final DateTime updatedAt;
 
+  /// True when this was a simulated paper trade — no real money moved.
+  final bool paperTrade;
+
   // ── Convenience getters ────────────────────────────────────────────────────
 
   bool get isBuy      => action.toUpperCase() == 'BUY';
@@ -103,6 +107,7 @@ class AlgoOrder extends Equatable {
       angelOrderId:    d['angel_order_id']   as String?,
       status:          _parseStatus(d['status'] as String?),
       rejectionReason: d['rejection_reason'] as String?,
+      paperTrade:      d['paper_trade']      as bool? ?? false,
       placedAt:        d['placed_at'] is Timestamp
           ? (d['placed_at'] as Timestamp).toDate()
           : DateTime.now(),
@@ -127,6 +132,7 @@ class AlgoOrder extends Equatable {
         'angel_order_id':   angelOrderId,
         'status':           status.value,
         'rejection_reason': rejectionReason,
+        'paper_trade':      paperTrade,
         'placed_at':        Timestamp.fromDate(placedAt),
         'updated_at':       Timestamp.fromDate(updatedAt),
       };
@@ -149,6 +155,7 @@ class AlgoOrder extends Equatable {
     String?       rejectionReason,
     DateTime?     placedAt,
     DateTime?     updatedAt,
+    bool?         paperTrade,
   }) =>
       AlgoOrder(
         id:              id              ?? this.id,
@@ -166,6 +173,7 @@ class AlgoOrder extends Equatable {
         rejectionReason: rejectionReason ?? this.rejectionReason,
         placedAt:        placedAt        ?? this.placedAt,
         updatedAt:       updatedAt       ?? this.updatedAt,
+        paperTrade:      paperTrade      ?? this.paperTrade,
       );
 
   @override
@@ -173,5 +181,6 @@ class AlgoOrder extends Equatable {
         id, signalId, userId, symbol, exchange,
         action, orderType, quantity, price, triggerPrice,
         angelOrderId, status, rejectionReason, placedAt, updatedAt,
+        paperTrade,
       ];
 }

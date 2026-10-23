@@ -690,6 +690,28 @@ class _OrderCardState extends State<_OrderCard>
                         ),
                       ),
                     ),
+                    // Paper trade badge
+                    if (order.paperTrade) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFFBEB),
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(color: const Color(0xFFFDE68A)),
+                        ),
+                        child: const Text(
+                          '🧪 PAPER',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFFD97706),
+                            letterSpacing: 0.4,
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
 

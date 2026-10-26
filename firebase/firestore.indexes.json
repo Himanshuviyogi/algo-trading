@@ -20,13 +20,6 @@
       "collectionGroup": "strategies",
       "queryScope": "COLLECTION_GROUP",
       "fields": [
-        { "fieldPath": "status",        "order": "ASCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "strategies",
-      "queryScope": "COLLECTION_GROUP",
-      "fields": [
         { "fieldPath": "status",        "order": "ASCENDING" },
         { "fieldPath": "exited_at",     "order": "ASCENDING" }
       ]
@@ -522,5 +515,24 @@
       ]
     }
   ],
-  "fieldOverrides": []
+  "fieldOverrides": [
+    {
+      "collectionGroup": "strategies",
+      "fieldPath": "status",
+      "indexes": [
+        { "order": "ASCENDING",  "queryScope": "COLLECTION" },
+        { "order": "DESCENDING", "queryScope": "COLLECTION" },
+        { "order": "ASCENDING",  "queryScope": "COLLECTION_GROUP" },
+        { "order": "DESCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "collectionGroup": "strategies",
+      "fieldPath": "drop_enabled",
+      "indexes": [
+        { "order": "ASCENDING",  "queryScope": "COLLECTION" },
+        { "order": "ASCENDING",  "queryScope": "COLLECTION_GROUP" }
+      ]
+    }
+  ]
 }

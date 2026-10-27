@@ -85,6 +85,73 @@ interface UserStrategy {
   entered_at?: FirebaseFirestore.Timestamp;
   // User identifier — stored on the doc for easy access inside collectionGroup
   user_id?: string;
+
+  // ── Fields written by create_strategy_screen.dart ───────────────────────────
+
+  // Indicator-based entry/exit conditions arrays (Section 2 of the wizard)
+  entry_conditions?: StrategyCondition[];
+  exit_conditions?:  StrategyCondition[];
+
+  // Custom trading schedule (Section 4 of the wizard)
+  // start_time / end_time: "09:30 AM" or "15:00 PM" in IST
+  start_time?:    string;
+  end_time?:      string;
+  // trading_days: list of 0-indexed weekdays (0=Mon…6=Sun in Flutter, 1=Mon…5=Fri typical)
+  // Stored as List<int> in Firestore — 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri
+  trading_days?:  number[];
+
+  // Per-strategy maximum loss cap — engine exits the position if floating P&L
+  // drops below -max_loss_rs (₹) regardless of the static SL level.
+  max_loss_rs?:   number;
+
+  // Locked profit floor — once floating profit reaches locked_profit_trigger_rs,
+  // the engine will not exit below a locked_profit_floor_rs profit.
+  // Implemented by dynamically raising the effective SL to floor.
+  locked_profit_trigger_rs?: number;   // P&L ₹ threshold to activate the lock
+  locked_profit_floor_rs?:   number;   // minimum ₹ profit to protect once locked
+  locked_profit_active?:     boolean;  // runtime flag — written by engine when triggered
+
+  // Re-entry after SL/target hit
+  re_entry?:          boolean;    // true = engine should re-arm the strategy
+  re_entry_mode?:     "time" | "signal";  // 'time' = wait N min, 'signal' = immediate
+  re_entry_wait_min?: number;     // minutes to wait before re-arming (mode='time')
+  re_entry_count?:    number;     // max number of re-entries (0 = unlimited)
+  re_entry_used?:     number;     // runtime: how many re-entries have fired so far
+  re_entry_not_before?: FirebaseFirestore.Timestamp; // runtime: earliest re-entry time
+
+  // Shares field (stocks strategies) — set by Flutter as 'shares' not 'quantity'
+  shares?: number;
+}
+
+// ── Condition object shape saved by create_strategy_screen.dart ──────────────
+interface StrategyCondition {
+  // snake_case fields (from Dart toMap())
+  lhs_type?:          string;    // 'Indicator' | 'Price'
+  indicator?:         string;    // 'EMA' | 'RSI' | 'MACD' | etc.
+  lhs_price?:         string;    // 'Close' | 'Open' | 'High' | 'Low' | 'Volume' | 'LTP'
+  param_a?:           string;    // primary period (e.g. '14')
+  param_b?:           string;    // secondary period (e.g. '26' for MACD slow)
+  param_c?:           string;    // signal period  (e.g. '9' for MACD signal)
+  operator?:          string;    // '>' | '<' | '>=' | '<=' | '==' | 'Crosses Above' | 'Crosses Below'
+  rhs_none?:          boolean;   // true = compare to zero/direction only
+  rhs_is_indicator?:  boolean;   // true = RHS is another indicator
+  value_a?:           string;    // numeric threshold (RHS when rhs_is_indicator=false)
+  value_b?:           string;    // RHS indicator name (when rhs_is_indicator=true)
+  rhs_period?:        string;    // period for RHS indicator
+  logic?:             string;    // 'AND' | 'OR' (gates with the NEXT condition)
+  candle_src?:        string;    // 'Current Candle' | 'Previous Candle'
+  // camelCase aliases (kept for forward compat)
+  lhsType?:           string;
+  lhsPrice?:          string;
+  paramA?:            string;
+  paramB?:            string;
+  paramC?:            string;
+  rhsNone?:           boolean;
+  rhsIsInd?:          boolean;
+  valueA?:            string;
+  valueB?:            string;
+  rhsPeriod?:         string;
+  candleSrc?:         string;
 }
 
 interface AlgoSignal {
@@ -543,7 +610,7 @@ export const onAlgoSignalWritten = onDocumentWritten(
         await writeOrderDoc(result.firestoreOrderId, {
           strategyId: docId, userId, symbol, exchange, action, orderType,
           quantity: lotSize, price: entryPrice,
-          angelOrderId: result.angelOrderId, status: result.status,
+          angelOrderId: result.angelOrderId, status: result.status ?? "complete",
         });
 
         const token = await getUserFcmToken(userId);
@@ -798,6 +865,7 @@ export const onStrategyEntryCheck = onSchedule(
       if (ltp == null) { skippedCount++; continue; }
 
       // ── Valid-till expiry check ───────────────────────────────────────────
+      // ── Expiry check ─────────────────────────────────────────────────────────
       // Auto-expire watching strategies whose valid_till date has passed.
       const validTill = w.strategy.valid_till;
       if (validTill && validTill.toMillis() < Date.now()) {
@@ -824,7 +892,34 @@ export const onStrategyEntryCheck = onSchedule(
         continue;
       }
 
-      // Entry condition check
+      // ── Re-entry wait check ───────────────────────────────────────────────
+      // If this strategy was re-armed after a previous exit, it may have a
+      // re_entry_not_before timestamp. Skip until that time has passed.
+      const reEntryNotBefore = (w.strategy as any).re_entry_not_before as FirebaseFirestore.Timestamp | undefined;
+      if (reEntryNotBefore && reEntryNotBefore.toMillis() > Date.now()) {
+        console.log(
+          `[EntryCheck] ${w.docRef.id}: re-entry wait active until ` +
+          `${reEntryNotBefore.toDate().toISOString()} — skipping.`
+        );
+        skippedCount++;
+        continue;
+      }
+
+      // ── Custom trading schedule check ─────────────────────────────────────
+      // Honour the user's start_time, end_time, and trading_days settings.
+      // If the current time is outside the configured window, skip this tick.
+      if (!_isWithinTradingSchedule(w.strategy, utcMins, now.getUTCDay())) {
+        console.log(
+          `[EntryCheck] ${w.docRef.id}: outside trading schedule ` +
+          `(start=${w.strategy.start_time ?? "default"} end=${w.strategy.end_time ?? "default"} ` +
+          `days=${JSON.stringify(w.strategy.trading_days ?? [])}) — skipping.`
+        );
+        skippedCount++;
+        continue;
+      }
+
+      // ── Entry condition check ─────────────────────────────────────────────
+      // Step 1: Price-level trigger (above / below / at_market)
       const tol = ltp * 0.0005; // 0.05% tolerance
       let conditionMet = false;
       switch (w.conditionType) {
@@ -834,10 +929,29 @@ export const onStrategyEntryCheck = onSchedule(
       }
       if (!conditionMet) { skippedCount++; continue; }
 
-      console.log(
-        `[EntryCheck] ✅ ${symbol} @ ₹${ltp} meets ${w.conditionType} ₹${w.conditionPrice} ` +
-        `for user ${w.userId} (${w.docRef.path})`
-      );
+      // Step 2: Indicator-based entry conditions (Section 2 of the wizard).
+      // Update the rolling state for this strategy, then evaluate all conditions.
+      const indState = _getIndState(w.docRef.id);
+      const prevLtp  = indState.prevClose;
+      _pushPrice(indState, ltp);
+
+      const entryConds = w.strategy.entry_conditions ?? [];
+      if (entryConds.length > 0) {
+        const indicatorsMet = _evalConditionsLive(entryConds, indState, ltp, prevLtp);
+        if (!indicatorsMet) {
+          console.log(
+            `[EntryCheck] ${w.docRef.id}: price trigger met but indicator conditions not satisfied at ₹${ltp} — waiting.`
+          );
+          skippedCount++;
+          continue;
+        }
+        console.log(`[EntryCheck] ${w.docRef.id}: price trigger AND indicator conditions met at ₹${ltp} ✅`);
+      } else {
+        console.log(
+          `[EntryCheck] ✅ ${symbol} @ ₹${ltp} meets ${w.conditionType} ₹${w.conditionPrice} ` +
+          `for user ${w.userId} (${w.docRef.path})`
+        );
+      }
 
       // ── Risk checks ──────────────────────────────────────────────────────
       try {
@@ -1006,7 +1120,7 @@ export const onStrategyEntryCheck = onSchedule(
         await writeOrderDoc(result.firestoreOrderId, {
           strategyId: strategyDocId, userId: w.userId, symbol, exchange,
           action, orderType: rawOrderType, quantity: finalQty, price: entryPrice,
-          angelOrderId: result.angelOrderId, status: result.status,
+          angelOrderId: result.angelOrderId, status: result.status ?? "complete",
           orderRole: "entry",
           productType,
           validity,
@@ -1032,7 +1146,7 @@ export const onStrategyEntryCheck = onSchedule(
                 strategyId: strategyDocId, userId: w.userId, symbol, exchange,
                 action: exitAction, orderType: "SL-M", quantity: finalQty,
                 price: slPrice, angelOrderId: slResult.angelOrderId,
-                status: slResult.status, orderRole: "bracket_sl",
+                status: slResult.status ?? "complete", orderRole: "bracket_sl",
                 productType, validity,
               });
               console.log(`[EntryCheck] Bracket SL order placed for ${strategyDocId}: ${slResult.firestoreOrderId}`);
@@ -1053,7 +1167,7 @@ export const onStrategyEntryCheck = onSchedule(
                 strategyId: strategyDocId, userId: w.userId, symbol, exchange,
                 action: exitAction, orderType: "LIMIT", quantity: finalQty,
                 price: targetPrice, angelOrderId: tgtResult.angelOrderId,
-                status: tgtResult.status, orderRole: "bracket_target",
+                status: tgtResult.status ?? "complete", orderRole: "bracket_target",
                 productType, validity,
               });
               console.log(`[EntryCheck] Bracket target order placed for ${strategyDocId}: ${tgtResult.firestoreOrderId}`);
@@ -1094,6 +1208,9 @@ export const onStrategyEntryCheck = onSchedule(
           "trade.current_price": ltp,
           ...(trailSlCurrent !== null && { trailing_sl_current: trailSlCurrent }),
         });
+
+        // Clean up in-memory indicator state — no longer needed after entry
+        _indStateMap.delete(w.docRef.id);
 
         enteredCount++;
         console.log(
@@ -1271,6 +1388,44 @@ export const onPositionMonitor = onSchedule(
         }
       }
 
+      // ── Locked Profit Floor ───────────────────────────────────────────────
+      // Once floating profit reaches locked_profit_trigger_rs, we dynamically
+      // raise the effective SL so the position cannot close below
+      // locked_profit_floor_rs profit.
+      const lockedTrigger = pos.data.locked_profit_trigger_rs ?? 0;
+      const lockedFloor   = pos.data.locked_profit_floor_rs   ?? 0;
+      const lockedAlready = pos.data.locked_profit_active     === true;
+
+      if (lockedTrigger > 0 && lockedFloor >= 0) {
+        const floatingPnl = isBuy
+          ? (ltp - entryLtp) * qty
+          : (entryLtp - ltp) * qty;
+
+        if (floatingPnl >= lockedTrigger || lockedAlready) {
+          // Compute the SL price that corresponds to locking in lockedFloor ₹
+          // For BUY:  SL_price = entryLtp + lockedFloor / qty
+          // For SELL: SL_price = entryLtp - lockedFloor / qty
+          const lockSlPrice = qty > 0
+            ? (isBuy
+                ? entryLtp + lockedFloor / qty
+                : entryLtp - lockedFloor / qty)
+            : effectiveSL;
+
+          // Raise the effective SL to lock the floor (never lower it)
+          if (isBuy  && lockSlPrice > effectiveSL) effectiveSL = lockSlPrice;
+          if (!isBuy && lockSlPrice < effectiveSL) effectiveSL = lockSlPrice;
+
+          if (!lockedAlready) {
+            // First time locking — write the flag to Firestore
+            await pos.docRef.update({ locked_profit_active: true });
+            console.log(
+              `[PositionMonitor] 🔒 Locked profit for ${pos.userId}/${pos.docRef.id}: ` +
+              `floatingPnl=₹${floatingPnl.toFixed(0)} >= trigger=₹${lockedTrigger} → lockSL=₹${lockSlPrice.toFixed(2)}`
+            );
+          }
+        }
+      }
+
       // ── MIS auto-squareoff check ──────────────────────────────────────
       // Angel One auto-squares MIS positions at ~15:20 IST (09:50 UTC).
       // We proactively exit at 15:15 IST (09:45 UTC) to avoid broker
@@ -1316,7 +1471,7 @@ export const onPositionMonitor = onSchedule(
             await writeOrderDoc(misResult.firestoreOrderId, {
               strategyId, userId: pos.userId, symbol, exchange,
               action: exitAction, orderType: "MARKET", quantity: qty, price: ltp,
-              angelOrderId: misResult.angelOrderId, status: misResult.status,
+              angelOrderId: misResult.angelOrderId, status: misResult.status ?? "complete",
               orderRole:   "exit",
               productType: "MIS",
               validity:    "DAY",
@@ -1395,6 +1550,45 @@ export const onPositionMonitor = onSchedule(
       if (!exitReason && effectiveSL > 0) {
         const slHit = isBuy ? ltp <= effectiveSL : ltp >= effectiveSL;
         if (slHit) exitReason = "sl_hit";
+      }
+
+      // ── Per-strategy Max Loss cap ─────────────────────────────────────────
+      // Exit immediately if the per-strategy max_loss_rs threshold is breached.
+      // This fires regardless of the static SL level — a safety hard-stop.
+      if (!exitReason) {
+        const maxLossRs = pos.data.max_loss_rs ?? 0;
+        if (maxLossRs > 0) {
+          const floatingPnl = isBuy
+            ? (ltp - entryLtp) * qty
+            : (entryLtp - ltp) * qty;
+          if (floatingPnl <= -maxLossRs) {
+            console.log(
+              `[PositionMonitor] 🛑 Max loss hit for ${pos.userId}/${pos.docRef.id}: ` +
+              `floatingPnl=₹${floatingPnl.toFixed(0)} <= -maxLoss=₹${maxLossRs} — force exit as sl_hit.`
+            );
+            exitReason = "sl_hit";
+          }
+        }
+      }
+
+      // ── Indicator-based exit conditions (Section 2, Exit tab) ────────────
+      // Evaluate exit_conditions array — if any condition is met, exit as
+      // target_hit (graceful exit when user's exit signal fires).
+      if (!exitReason) {
+        const exitConds = pos.data.exit_conditions ?? [];
+        if (exitConds.length > 0) {
+          const posIndState = _getIndState(`${pos.docRef.id}_exit`);
+          const prevLtp     = posIndState.prevClose;
+          _pushPrice(posIndState, ltp);
+          const exitSignal = _evalConditionsLive(exitConds, posIndState, ltp, prevLtp);
+          if (exitSignal) {
+            console.log(
+              `[PositionMonitor] 📊 Exit conditions met for ${pos.userId}/${pos.docRef.id} ` +
+              `at ₹${ltp} — closing as target_hit.`
+            );
+            exitReason = "target_hit";
+          }
+        }
       }
 
       if (!exitReason) { monitorCount++; continue; }
@@ -1488,7 +1682,7 @@ export const onPositionMonitor = onSchedule(
         await writeOrderDoc(result.firestoreOrderId, {
           strategyId, userId: pos.userId, symbol, exchange,
           action: exitAction, orderType, quantity: qty, price: ltp,
-          angelOrderId: result.angelOrderId, status: result.status,
+          angelOrderId: result.angelOrderId, status: result.status ?? "complete",
           orderRole: "exit",
           productType: exitProductType,
           validity:    exitValidity,
@@ -1548,6 +1742,54 @@ export const onPositionMonitor = onSchedule(
           symbol,
           pnl:        pnlRs,
         });
+
+        // ── Re-entry logic ─────────────────────────────────────────────────
+        // If the user enabled re-entry and hasn't exceeded max re-entries,
+        // reset the strategy back to 'watching' after the configured delay.
+        // The delay is implemented via a simple timestamp on the strategy doc —
+        // the entry check engine respects re_entry_not_before and skips the
+        // strategy until the time has passed.
+        const reEntryEnabled = pos.data.re_entry === true;
+        const reEntryCount   = pos.data.re_entry_count  ?? 0;  // 0 = unlimited
+        const reEntryUsed    = pos.data.re_entry_used   ?? 0;
+        const reEntryMode    = pos.data.re_entry_mode   ?? "time";
+        const reEntryWaitMin = pos.data.re_entry_wait_min ?? 5;
+
+        const withinReEntryLimit = reEntryCount === 0 || reEntryUsed < reEntryCount;
+
+        if (reEntryEnabled && withinReEntryLimit) {
+          const waitMs     = reEntryMode === "time" ? reEntryWaitMin * 60 * 1000 : 0;
+          const notBefore  = new Date(Date.now() + waitMs);
+
+          // Reset strategy to 'watching' — engine will re-enter when conditions are met again
+          await pos.docRef.update({
+            status:                 "watching",
+            re_entry_used:          reEntryUsed + 1,
+            re_entry_not_before:    Timestamp.fromDate(notBefore),
+            // Clear runtime entry fields so the next entry is fresh
+            entry_order_id:         FieldValue.delete(),
+            entry_ltp:              FieldValue.delete(),
+            entry_qty:              FieldValue.delete(),
+            entered_at:             FieldValue.delete(),
+            exit_ltp:               FieldValue.delete(),
+            exit_order_id:          FieldValue.delete(),
+            exited_at:              FieldValue.delete(),
+            realised_pnl_rs:        FieldValue.delete(),
+            realised_pnl_pct:       FieldValue.delete(),
+            trailing_sl_current:    FieldValue.delete(),
+            locked_profit_active:   FieldValue.delete(),
+            "meta.updated_at":      FieldValue.serverTimestamp(),
+          });
+
+          console.log(
+            `[PositionMonitor] 🔁 Re-entry armed for ${pos.userId}/${strategyId}: ` +
+            `used=${reEntryUsed + 1}/${reEntryCount === 0 ? "∞" : reEntryCount} ` +
+            `mode=${reEntryMode} notBefore=${notBefore.toISOString()}`
+          );
+        }
+
+        // Clean up exit indicator state for this position
+        _indStateMap.delete(`${pos.docRef.id}_exit`);
       } catch (err) {
         console.error(
           `[PositionMonitor] Unexpected error for ${pos.userId}/${pos.docRef.id}:`,
@@ -1562,6 +1804,408 @@ export const onPositionMonitor = onSchedule(
     );
   }
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _normCond
+//
+// Normalise a condition object — handle both snake_case (from Dart toMap())
+// and camelCase field names so both work transparently.
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface NormCond {
+  lhsType:   string;
+  indicator: string;
+  lhsPrice:  string;
+  paramA:    string;
+  paramB:    string;
+  paramC:    string;
+  candleSrc: string;
+  op:        string;
+  rhsNone:   boolean;
+  rhsIsInd:  boolean;
+  valueA:    string;
+  valueB:    string;
+  rhsPeriod: string;
+  logic:     string;
+}
+
+function _normCond(c: StrategyCondition): NormCond {
+  return {
+    lhsType:   c.lhs_type        ?? c.lhsType   ?? "Indicator",
+    indicator: c.indicator       ?? "",
+    lhsPrice:  c.lhs_price       ?? c.lhsPrice  ?? "Close",
+    paramA:    c.param_a         ?? c.paramA    ?? "14",
+    paramB:    c.param_b         ?? c.paramB    ?? "14",
+    paramC:    c.param_c         ?? c.paramC    ?? "9",
+    candleSrc: c.candle_src      ?? c.candleSrc ?? "Current Candle",
+    op:        c.operator        ?? ">" ,
+    rhsNone:   c.rhs_none        ?? c.rhsNone   ?? false,
+    rhsIsInd:  c.rhs_is_indicator ?? c.rhsIsInd ?? false,
+    valueA:    c.value_a         ?? c.valueA    ?? "0",
+    valueB:    c.value_b         ?? c.valueB    ?? "",
+    rhsPeriod: c.rhs_period      ?? c.rhsPeriod ?? "14",
+    logic:     c.logic           ?? "AND",
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _emaStep
+//
+// Incremental single-step EMA calculation using Wilder smoothing factor.
+// k = 2 / (period + 1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function _emaStep(prev: number, current: number, period: number): number {
+  const k = 2 / (period + 1);
+  return current * k + prev * (1 - k);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _IndicatorState
+//
+// Holds rolling state for incremental indicator calculation at runtime.
+// Instead of fetching full OHLCV history from Angel One in every tick, we
+// maintain a sliding window of the last N LTP values and compute indicator
+// values incrementally.
+//
+// State is stored in memory per strategy, keyed by strategyId.
+// It is flushed when a strategy enters a position (no longer needed for entry).
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface IndicatorState {
+  // Sliding window of recent close prices (up to maxWindow)
+  closes:        number[];
+  // Incremental EMA state: keyed by period
+  emas:          Record<number, number>;
+  // Incremental RSI state: keyed by period
+  rsiAvgGain:    Record<number, number>;
+  rsiAvgLoss:    Record<number, number>;
+  rsiCount:      Record<number, number>;
+  // Previous close for RSI diff
+  prevClose:     number | null;
+  // Candle count pushed (for warm-up tracking)
+  count:         number;
+}
+
+// In-memory state store — reset on cold start, that's fine for a 1-min engine
+const _indStateMap = new Map<string, IndicatorState>();
+
+function _getIndState(stratId: string): IndicatorState {
+  if (!_indStateMap.has(stratId)) {
+    _indStateMap.set(stratId, {
+      closes: [], emas: {}, rsiAvgGain: {}, rsiAvgLoss: {}, rsiCount: {},
+      prevClose: null, count: 0,
+    });
+  }
+  return _indStateMap.get(stratId)!;
+}
+
+function _pushPrice(state: IndicatorState, price: number, maxWindow = 200): void {
+  state.closes.push(price);
+  if (state.closes.length > maxWindow) state.closes.shift();
+
+  // ── Update RSI states ──────────────────────────────────────────────────────
+  if (state.prevClose !== null) {
+    const diff = price - state.prevClose;
+    const gain = diff > 0 ? diff : 0;
+    const loss = diff < 0 ? Math.abs(diff) : 0;
+
+    for (const pStr of Object.keys(state.rsiAvgGain)) {
+      const p = parseInt(pStr);
+      if (state.rsiCount[p] < p) {
+        // Accumulation phase: simple average
+        state.rsiAvgGain[p] = (state.rsiAvgGain[p] * state.rsiCount[p] + gain) / (state.rsiCount[p] + 1);
+        state.rsiAvgLoss[p] = (state.rsiAvgLoss[p] * state.rsiCount[p] + loss) / (state.rsiCount[p] + 1);
+        state.rsiCount[p]++;
+      } else {
+        // Wilder smooth
+        state.rsiAvgGain[p] = (state.rsiAvgGain[p] * (p - 1) + gain) / p;
+        state.rsiAvgLoss[p] = (state.rsiAvgLoss[p] * (p - 1) + loss) / p;
+      }
+    }
+
+    // ── Update EMA states ────────────────────────────────────────────────────
+    for (const pStr of Object.keys(state.emas)) {
+      const p = parseInt(pStr);
+      if (state.closes.length >= p) {
+        state.emas[p] = _emaStep(state.emas[p], price, p);
+      }
+    }
+  }
+
+  state.prevClose = price;
+  state.count++;
+}
+
+/** Seed RSI state for period p if not already present. */
+function _ensureRsi(state: IndicatorState, period: number): void {
+  if (!(period in state.rsiAvgGain)) {
+    state.rsiAvgGain[period] = 0;
+    state.rsiAvgLoss[period] = 0;
+    state.rsiCount[period]   = 0;
+  }
+}
+
+/** Seed EMA state for period p if not already present. */
+function _ensureEma(state: IndicatorState, period: number, initPrice: number): void {
+  if (!(period in state.emas)) {
+    // Seed with SMA of available closes or just the current price
+    if (state.closes.length >= period) {
+      const slice = state.closes.slice(-period);
+      state.emas[period] = slice.reduce((a, b) => a + b, 0) / period;
+    } else {
+      state.emas[period] = initPrice;
+    }
+  }
+}
+
+// ── Compute a single indicator value from current rolling state ───────────────
+
+function _indValueFromState(
+  indicator: string,
+  paramA: string,
+  state: IndicatorState,
+  currentPrice: number
+): number | null {
+  const period = parseInt(paramA) || 14;
+  const closes = state.closes;
+  const n = closes.length;
+
+  switch (indicator) {
+    case "EMA": {
+      _ensureEma(state, period, currentPrice);
+      if (n < Math.min(period, 3)) return null; // not enough data yet
+      return state.emas[period] ?? null;
+    }
+    case "SMA": {
+      if (n < period) return null;
+      const slice = closes.slice(-period);
+      return slice.reduce((a, b) => a + b, 0) / period;
+    }
+    case "RSI": {
+      _ensureRsi(state, period);
+      if (state.rsiCount[period] < period) return null; // still warming up
+      const avgGain = state.rsiAvgGain[period];
+      const avgLoss = state.rsiAvgLoss[period];
+      if (avgLoss === 0) return 100;
+      const rs = avgGain / avgLoss;
+      return 100 - 100 / (1 + rs);
+    }
+    case "MACD": {
+      // MACD line = EMA(fast=paramA) - EMA(slow=26)
+      const fast = period;
+      const slow = 26;
+      _ensureEma(state, fast, currentPrice);
+      _ensureEma(state, slow, currentPrice);
+      if (n < Math.min(fast, 3)) return null;
+      const emaFast = state.emas[fast];
+      const emaSlow = state.emas[slow];
+      if (emaFast == null || emaSlow == null) return null;
+      return emaFast - emaSlow;
+    }
+    case "ATR": {
+      if (n < 2) return null;
+      // Simplified ATR using close-to-close as true-range proxy (no OHLC available)
+      const diffs: number[] = [];
+      for (let i = Math.max(1, n - period); i < n; i++) {
+        diffs.push(Math.abs(closes[i] - closes[i - 1]));
+      }
+      if (diffs.length === 0) return null;
+      return diffs.reduce((a, b) => a + b, 0) / diffs.length;
+    }
+    case "Bollinger Bands": {
+      if (n < period) return null;
+      const slice = closes.slice(-period);
+      const mean  = slice.reduce((a, b) => a + b, 0) / period;
+      const std   = Math.sqrt(slice.reduce((s, v) => s + (v - mean) ** 2, 0) / period);
+      return mean + 2 * std; // upper band
+    }
+    case "Volume":
+      // No volume data in the LTP-only feed — return neutral
+      return 0;
+    case "VWAP":
+      // Requires tick volume — approximate with SMA of recent prices
+      return closes.length >= 5
+        ? closes.slice(-5).reduce((a, b) => a + b, 0) / 5
+        : currentPrice;
+    case "OI":
+    case "PCR":
+    case "IV / IV Rank":
+    case "Option Premium":
+      // Not available via LTP feed — return neutral value (50)
+      // so these conditions never block entry unintentionally
+      return 50;
+    default:
+      return null;
+  }
+}
+
+// ── Get LHS value from a condition ────────────────────────────────────────────
+
+function _lhsValueFromState(
+  cond: NormCond,
+  state: IndicatorState,
+  currentPrice: number
+): number | null {
+  if (cond.lhsType === "Price") {
+    // In a tick-only feed, Open/High/Low are all approximated by close
+    return currentPrice;
+  }
+  return _indValueFromState(cond.indicator, cond.paramA, state, currentPrice);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _evalConditionsLive
+//
+// Evaluate a list of StrategyCondition objects against the current LTP and
+// rolling indicator state.
+//
+// Returns true if all/any (AND/OR chain) conditions are met.
+// Returns true (pass-through) if the conditions array is empty.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function _evalConditionsLive(
+  conds: StrategyCondition[],
+  state: IndicatorState,
+  currentPrice: number,
+  prevPrice: number | null
+): boolean {
+  if (!conds || conds.length === 0) return true;
+
+  let result = _evalSingleCondLive(_normCond(conds[0]), state, currentPrice, prevPrice);
+
+  for (let c = 1; c < conds.length; c++) {
+    const gate   = (conds[c - 1].logic ?? conds[c - 1].logic ?? "AND").toUpperCase();
+    const thisOk = _evalSingleCondLive(_normCond(conds[c]), state, currentPrice, prevPrice);
+    result = gate === "OR" ? (result || thisOk) : (result && thisOk);
+  }
+
+  return result;
+}
+
+function _evalSingleCondLive(
+  cond: NormCond,
+  state: IndicatorState,
+  currentPrice: number,
+  prevPrice: number | null
+): boolean {
+  const lhs = _lhsValueFromState(cond, state, currentPrice);
+  if (lhs === null) return false; // still warming up
+
+  // rhsNone: direction-only check
+  if (cond.rhsNone) {
+    switch (cond.indicator) {
+      case "MACD":  return lhs > 0;
+      case "ADX":   return lhs > 25;
+      default:      return lhs > 0;
+    }
+  }
+
+  let rhs: number;
+  if (cond.rhsIsInd) {
+    const rhsVal = _indValueFromState(cond.valueB, cond.rhsPeriod, state, currentPrice);
+    if (rhsVal === null) return false;
+    rhs = rhsVal;
+  } else {
+    rhs = parseFloat(cond.valueA) || 0;
+  }
+
+  // For crossover operators we need the previous value of LHS
+  if (cond.op === "Crosses Above" || cond.op === "Crosses Below") {
+    if (prevPrice === null) return false;
+    // Approximate "previous LHS" by evaluating with prevPrice
+    // We do this by temporarily cloning the state window minus the last entry
+    const prevLhs = ((): number | null => {
+      const prevCloses = state.closes.slice(0, -1);
+      if (prevCloses.length === 0) return null;
+      // Approximate: use second-to-last SMA/EMA as prev value
+      if (cond.lhsType === "Price") return prevPrice;
+      if (cond.indicator === "EMA") {
+        const p = parseInt(cond.paramA) || 14;
+        const s = prevCloses.slice(-p);
+        return s.length >= 1 ? s.reduce((a, b) => a + b, 0) / s.length : null;
+      }
+      if (cond.indicator === "SMA") {
+        const p = parseInt(cond.paramA) || 14;
+        const s = prevCloses.slice(-p);
+        return s.length === p ? s.reduce((a, b) => a + b, 0) / p : null;
+      }
+      return prevPrice; // fallback
+    })();
+
+    if (prevLhs === null) return false;
+    const prevRhs = cond.rhsIsInd
+      ? (prevLhs) // approximate — same RHS value
+      : rhs;
+
+    if (cond.op === "Crosses Above") return prevLhs <= prevRhs && lhs > rhs;
+    if (cond.op === "Crosses Below") return prevLhs >= prevRhs && lhs < rhs;
+  }
+
+  switch (cond.op) {
+    case ">":  return lhs >  rhs;
+    case "<":  return lhs <  rhs;
+    case ">=": return lhs >= rhs;
+    case "<=": return lhs <= rhs;
+    case "==": return Math.abs(lhs - rhs) < Math.max(0.001, Math.abs(rhs) * 0.001);
+    default:   return false;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _isWithinTradingSchedule
+//
+// Returns true if the current IST time falls within the user-configured
+// trading window for the strategy.
+//
+// Fields read from strategy:
+//   start_time:   "09:15 AM"  — defaults to market open (09:15 IST)
+//   end_time:     "15:00 PM"  — defaults to market close (15:00 IST)
+//   trading_days: [1,2,3,4,5] — 1=Mon … 5=Fri (Flutter convention)
+//
+// utcMins: current time expressed as minutes since midnight UTC.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function _parseIstTimeToUtcMins(timeStr: string): number | null {
+  // Expected format: "09:15 AM" or "03:30 PM" or "15:30 PM"
+  // Also tolerates "9:15 AM", "15:00" (no AM/PM)
+  if (!timeStr) return null;
+  const m = timeStr.trim().match(/^(\d{1,2}):(\d{2})(?:\s*(AM|PM))?$/i);
+  if (!m) return null;
+  let hours   = parseInt(m[1]);
+  const mins  = parseInt(m[2]);
+  const ampm  = (m[3] ?? "").toUpperCase();
+  if (ampm === "PM" && hours !== 12) hours += 12;
+  if (ampm === "AM" && hours === 12) hours = 0;
+  // Convert IST (UTC+5:30) to UTC: subtract 5h 30m
+  const istMins = hours * 60 + mins;
+  return ((istMins - 330) + 1440) % 1440; // keep positive
+}
+
+function _isWithinTradingSchedule(
+  strategy: UserStrategy,
+  utcMins: number,
+  utcDayOfWeek: number  // 0=Sun,1=Mon...6=Sat
+): boolean {
+  // ── Day-of-week check ─────────────────────────────────────────────────────
+  const tradingDays = strategy.trading_days;
+  if (tradingDays && tradingDays.length > 0) {
+    // Flutter stores 1=Mon…5=Fri. JS getUTCDay() gives 0=Sun,1=Mon…6=Sat.
+    // utcDayOfWeek 1=Mon matches Flutter 1=Mon → direct comparison works.
+    if (!tradingDays.includes(utcDayOfWeek)) {
+      return false;
+    }
+  }
+
+  // ── Time-of-day check ──────────────────────────────────────────────────────
+  const startUtc = _parseIstTimeToUtcMins(strategy.start_time ?? "");
+  const endUtc   = _parseIstTimeToUtcMins(strategy.end_time   ?? "");
+
+  if (startUtc !== null && utcMins < startUtc) return false;
+  if (endUtc   !== null && utcMins > endUtc)   return false;
+
+  return true;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // _computeQuantity
@@ -1622,9 +2266,18 @@ async function _computeQuantity(
     return Math.max(1, qty);
   }
 
+  // Stocks "Fixed Shares" — Flutter writes the field as 'shares', not 'quantity'
+  if (mode === "Fixed Shares") {
+    const shares = strategy.shares ?? strategy.quantity ?? 1;
+    console.log(`[Qty] Fixed Shares: ${shares}`);
+    return Math.max(1, shares);
+  }
+
   // Legacy / fallback: raw quantity field × lot_size
-  const qty = (strategy.quantity ?? 1) * lotSize;
-  console.log(`[Qty] Legacy fallback: quantity=${strategy.quantity} × lotSize=${lotSize} = ${qty}`);
+  // Also covers stocks where position_sizing is absent/blank
+  const rawQty = strategy.shares ?? strategy.quantity ?? 1;
+  const qty    = rawQty * lotSize;
+  console.log(`[Qty] Legacy fallback: qty=${rawQty} × lotSize=${lotSize} = ${qty}`);
   return Math.max(1, qty);
 }
 

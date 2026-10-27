@@ -27,6 +27,13 @@ class PaymentConfig {
   bool get isRazorpay => mode == 'razorpay';
   bool get isManual   => mode == 'manual';
 
+  /// Returns true if the Razorpay key is still the placeholder.
+  /// The app checks this before opening a payment sheet and refuses to proceed.
+  bool get hasValidRazorpayKey =>
+      razorpayKeyId.isNotEmpty &&
+      razorpayKeyId != _testKeyId &&
+      (razorpayKeyId.startsWith('rzp_test_') || razorpayKeyId.startsWith('rzp_live_'));
+
   factory PaymentConfig.fromMap(Map<String, dynamic> m) => PaymentConfig(
         mode:                m['payment_mode']        as String? ?? 'manual',
         razorpayKeyId:       m['razorpay_key_id']     as String? ?? _testKeyId,

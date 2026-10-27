@@ -99,6 +99,14 @@ class PaymentService {
   }) {
     _completer = Completer<PaymentResult>();
 
+    // Guard against the placeholder key reaching production
+    if (!_config.hasValidRazorpayKey) {
+      _completer!.complete(PaymentResult.failure(
+        'Razorpay key not configured. Please contact support.',
+      ));
+      return _completer!.future;
+    }
+
     final user = FirebaseAuth.instance.currentUser;
 
     final options = {

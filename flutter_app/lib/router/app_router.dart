@@ -452,9 +452,24 @@ GoRouter createAppRouter({
           );
         },
       ),
-      // /admin — temporary admin seed screen (accessible from profile)
+      // /admin — admin-only seed screen: redirect non-admins to home
       GoRoute(
         path: '/admin',
+        redirect: (context, state) async {
+          final authState = authBloc.state;
+          if (authState is! AuthAuthenticated) return '/home/dashboard';
+          // Check if user's email is in the admins collection
+          try {
+            final user = await FirebaseFirestore.instance
+                .collection('admins')
+                .doc(authState.phoneNumber)
+                .get();
+            if (!user.exists) return '/home/dashboard';
+          } catch (_) {
+            return '/home/dashboard';
+          }
+          return null; // allow through
+        },
         builder: (context, state) => const AdminSeedScreen(),
       ),
     ],

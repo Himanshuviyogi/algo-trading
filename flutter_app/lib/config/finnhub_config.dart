@@ -18,8 +18,12 @@ class WatchlistEntry {
 class FinnhubConfig {
   // ── API credentials ──────────────────────────────────────────────────────
 
-  /// Finnhub API key.  Replace with your key from https://finnhub.io
-  static const String apiKey = 'd7flf69r01qpjqql8o30d7flf69r01qpjqql8o3g';
+  /// Finnhub API key — injected at build time via --dart-define=FINNHUB_API_KEY=xxx
+  /// Falls back to empty string; the MarketDataRepository handles the 401 gracefully.
+  static const String apiKey = String.fromEnvironment(
+    'FINNHUB_API_KEY',
+    defaultValue: '',
+  );
 
   /// Base URL for Finnhub REST endpoints.
   static const String baseUrl = 'https://finnhub.io/api/v1';

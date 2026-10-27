@@ -89,15 +89,15 @@ void main() async {
     localStorage: localStorage,
   );
 
-  // Raw FCM listener — bypasses all cubit/bloc layers.
-  // If this prints but the banner doesn't show, the issue is in the UI layer.
-  // If this doesn't print, FCM delivery itself is broken (topic not subscribed, etc.)
-  FirebaseMessaging.onMessage.listen((msg) {
-    print('🔥 [RAW FCM] onMessage received!');
-    print('🔥 [RAW FCM] title: ${msg.notification?.title}');
-    print('🔥 [RAW FCM] body: ${msg.notification?.body}');
-    print('🔥 [RAW FCM] data: ${msg.data}');
-  });
+  // Raw FCM diagnostic listener — debug only.
+  if (kDebugMode) {
+    FirebaseMessaging.onMessage.listen((msg) {
+      debugPrint('🔥 [RAW FCM] onMessage received!');
+      debugPrint('🔥 [RAW FCM] title: ${msg.notification?.title}');
+      debugPrint('🔥 [RAW FCM] body: ${msg.notification?.body}');
+      debugPrint('🔥 [RAW FCM] data: ${msg.data}');
+    });
+  }
 
   runApp(
     MyApp(
@@ -493,10 +493,10 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
             // ── Foreground FCM messages ────────────────────────────────────
             BlocListener<NotificationCubit, NotificationState>(
               listener: (context, state) {
-                print('🎯 [AppShell] BlocListener fired — state: ${state.runtimeType}');
+                debugPrint('🎯 [AppShell] BlocListener fired — state: ${state.runtimeType}');
 
                 if (state is! NotificationForegroundMessage) {
-                  print('🎯 [AppShell] Not a foreground message, ignoring');
+                  debugPrint('🎯 [AppShell] Not a foreground message, ignoring');
                   return;
                 }
             //
@@ -546,20 +546,20 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
             }
 
             WidgetsBinding.instance.addPostFrameCallback((_) {
-              print('🎯 [AppShell] postFrameCallback — looking for navigator overlay...');
+              debugPrint('🎯 [AppShell] postFrameCallback — looking for navigator overlay...');
 
               // Trigger foreground haptic/sound feedback with per-type audio
               LocalNotificationService.instance.triggerForegroundFeedback(type: type);
 
               final navigatorState =
                   widget.router.routerDelegate.navigatorKey.currentState;
-              print('🎯 [AppShell] navigatorState: $navigatorState');
+              debugPrint('🎯 [AppShell] navigatorState: $navigatorState');
 
               final overlay = navigatorState?.overlay;
-              print('🎯 [AppShell] overlay: $overlay');
+              debugPrint('🎯 [AppShell] overlay: $overlay');
 
               if (overlay != null) {
-                print('✅ [AppShell] Showing NotificationBanner via overlay');
+                debugPrint('✅ [AppShell] Showing NotificationBanner via overlay');
                 NotificationBanner.showOnOverlay(
                   overlay,
                   title: title,
@@ -569,10 +569,10 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
                   onTap: null,
                 );
               } else {
-                print('⚠️ [AppShell] overlay is null — falling back to SnackBar');
+                debugPrint('⚠️ [AppShell] overlay is null — falling back to SnackBar');
                 final navContext =
                     widget.router.routerDelegate.navigatorKey.currentContext;
-                print('🎯 [AppShell] navContext: $navContext');
+                debugPrint('🎯 [AppShell] navContext: $navContext');
                 if (navContext != null && navContext.mounted) {
                   ScaffoldMessenger.maybeOf(navContext)?.showSnackBar(
                     SnackBar(
@@ -584,7 +584,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
                     ),
                   );
                 } else {
-                  print('❌ [AppShell] navContext is null or unmounted — notification lost');
+                  debugPrint('❌ [AppShell] navContext is null or unmounted — notification lost');
                 }
               }
             });

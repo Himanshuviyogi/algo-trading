@@ -316,10 +316,17 @@ async function getUserFcmToken(uid: string): Promise<string | null> {
 }
 
 async function callPlaceOrder(payload: PlaceOrderPayload): Promise<PlaceOrderResult> {
+  const serviceSecret = process.env.PRICE_SERVER_SECRET ?? "";
   const response = await axios.post<PlaceOrderResult>(
     `${PRICE_SERVER_URL}/place-order`,
-    payload,  // paperTrade is forwarded in the body if present
-    { headers: { "Content-Type": "application/json" }, timeout: 15_000 }
+    payload,
+    {
+      headers: {
+        "Content-Type": "application/json",
+        ...(serviceSecret && { "x-service-secret": serviceSecret }),
+      },
+      timeout: 15_000,
+    }
   );
   return response.data;
 }
@@ -1694,6 +1701,32 @@ export const onPositionMonitor = onSchedule(
           ? (ltp - entryLtp) * qty
           : (entryLtp - ltp) * qty;
         const pnlPct = entryLtp > 0 ? (pnlRs / (entryLtp * qty)) * 100 : 0;
+
+        // ── Cancel surviving bracket leg ────────────────────────────────────
+        // If this was a bracket strategy, one of the bracket_sl / bracket_target
+        // orders is now dangling open on Angel One. Cancel it before writing closed.
+        if (pos.data.bracket_order === true) {
+          try {
+            const db = getFirestore();
+            const danglingSnap = await db.collection("orders")
+              .where("strategy_id", "==", strategyId)
+              .where("status", "in", ["open", "pending"])
+              .where("order_role", "in", ["bracket_sl", "bracket_target"])
+              .get();
+            for (const dDoc of danglingSnap.docs) {
+              const angelId = dDoc.data().angel_order_id as string | null;
+              if (angelId) {
+                await axios.post(`${PRICE_SERVER_URL}/cancel-order`,
+                  { angelOrderId: angelId, userId: pos.userId },
+                  { headers: { "Content-Type": "application/json", ...(process.env.PRICE_SERVER_SECRET && { "x-service-secret": process.env.PRICE_SERVER_SECRET }) }, timeout: 10_000 }
+                ).catch(e => console.warn(`[PositionMonitor] Cancel bracket leg ${angelId} failed: ${e.message}`));
+              }
+            }
+          } catch (cancelErr) {
+            console.warn(`[PositionMonitor] Bracket leg cancel error for ${strategyId}:`,
+              cancelErr instanceof Error ? cancelErr.message : cancelErr);
+          }
+        }
 
         // Update strategy doc
         await pos.docRef.update({

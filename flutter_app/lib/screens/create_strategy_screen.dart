@@ -146,12 +146,16 @@ Future<List<_StockInstrument>> _fetchFirestoreInstruments(String query) async {
 const _kIndexes = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX'];
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Lot sizes per index underlying
+// Lot sizes per index underlying — effective October 28, 2025 (NSE revised)
+// Source: https://www.5paisa.com/news/nse-reduces-fo-lot-sizes-for-nifty-50-and-key-indices-from-october-28
 // ─────────────────────────────────────────────────────────────────────────────
 const _kLotSizes = {
-  'NIFTY':       50.0,
-  'BANKNIFTY':   15.0,
-  'FINNIFTY':    40.0,
+  'NIFTY':       65.0,
+  'BANKNIFTY':   30.0,
+  'FINNIFTY':    60.0,
+  'MIDCPNIFTY':  120.0,
+  'SENSEX':      20.0,
+};
   'MIDCPNIFTY':  75.0,
   'SENSEX':      10.0,
 };
@@ -543,7 +547,16 @@ class _CSS extends State<CreateStrategyScreen> {
   void initState() {
     super.initState();
 
-    // ── Fix 4: detect stock prefill from screener ──────────────────────────
+    // ── Live progress bar — rebuild whenever score-affecting fields change ──
+    // _completionScore reads _nameCtrl, _slCtrl, _tgtCtrl directly.
+    // Without listeners the score getter fires but the widget never rebuilds.
+    void rebuildScore() { if (mounted) setState(() {}); }
+    _nameCtrl.addListener(rebuildScore);
+    _slCtrl.addListener(rebuildScore);
+    _tgtCtrl.addListener(rebuildScore);
+    _sharesCtrl.addListener(rebuildScore);
+    _lotsCtrl.addListener(rebuildScore);
+    _pctCapCtrl.addListener(rebuildScore);
     final sym = widget.prefillSymbol;
     if (sym != null) {
       if (_kIndexes.contains(sym.toUpperCase())) {
@@ -698,13 +711,30 @@ class _CSS extends State<CreateStrategyScreen> {
       if (capPct  != null) _pctCapCtrl.text  = '$capPct';
 
       // Step 4 — Risk & Exit
-      final sl      = d['sl_pct']            as double?;
-      final tgt     = d['target_pct']        as double?;
-      final maxLoss = d['max_loss']          as double?;
-      final lockAt  = d['locked_profit_at']  as double?;
-      final lockMin = d['locked_profit_min'] as double?;
-      if (sl      != null) _slCtrl.text           = '$sl';
-      if (tgt     != null) _tgtCtrl.text          = '$tgt';
+      // Primary: read back the % fields that were saved by the wizard
+      // Fallback: back-calculate % from absolute ₹ values + entry price
+      //   (handles strategies saved before sl_pct/target_pct were written)
+      double? sl  = _toDouble(d['sl_pct'])     ?? _toDouble(d['stoploss_pct']);
+      double? tgt = _toDouble(d['target_pct']) ?? _toDouble(d['tgt_pct']);
+
+      if ((sl == null || tgt == null)) {
+        final entryPrice = _toDouble(d['entry_condition_price'])
+                        ?? _toDouble((d['trade'] as Map?)?['entry_price'])
+                        ?? 0.0;
+        final analysis   = d['analysis'] as Map<String, dynamic>?;
+        if (analysis != null && entryPrice > 0) {
+          final slAbs  = _toDouble(analysis['stoploss']);
+          final tgtAbs = _toDouble(analysis['target']);
+          if (sl  == null && slAbs  != null) sl  = ((entryPrice - slAbs)  / entryPrice * 100).abs();
+          if (tgt == null && tgtAbs != null) tgt = ((tgtAbs - entryPrice) / entryPrice * 100).abs();
+        }
+      }
+
+      final maxLoss = _toDouble(d['max_loss']);
+      final lockAt  = _toDouble(d['locked_profit_at']);
+      final lockMin = _toDouble(d['locked_profit_min']);
+      if (sl      != null) _slCtrl.text           = sl.toStringAsFixed(sl  % 1 == 0 ? 0 : 2);
+      if (tgt     != null) _tgtCtrl.text          = tgt.toStringAsFixed(tgt % 1 == 0 ? 0 : 2);
       if (maxLoss != null) _maxLossCtrl.text       = '$maxLoss';
       if (lockAt  != null) _lockAtCtrl.text        = '$lockAt';
       if (lockMin != null) _lockedProfitCtrl.text  = '$lockMin';
@@ -993,7 +1023,7 @@ class _CSS extends State<CreateStrategyScreen> {
       'position_sizing':   isOpt ? _posSizing : _stockSizing,
       if (isOpt)  'lots':  int.tryParse(_lotsCtrl.text.trim()),
       if (!isOpt) 'shares': int.tryParse(_sharesCtrl.text.trim()),
-      if (isOpt) 'lot_size': (_kLotSizes[_underlying] ?? 50).toInt(),
+      if (isOpt) 'lot_size': (_kLotSizes[_underlying] ?? 65).toInt(),
       'capital_amount':    double.tryParse(_capitalCtrl.text.trim()),
       'capital_pct':       double.tryParse(_pctCapCtrl.text.trim()),
 
@@ -1063,22 +1093,71 @@ class _CSS extends State<CreateStrategyScreen> {
   // ── Completion score — drives section status badges & button state ──────────
   // Returns 0–100. We check: name, instrument, conditions, legs/position,
   // risk fields. Each bucket worth ~20 points.
+  //
+  // Buckets:
+  //   1. Name        — non-default strategy name
+  //   2. Instrument  — underlying/symbol selected
+  //   3. Conditions  — at least 1 entry condition with a value filled in
+  //   4. Position    — options: legs added; stocks: shares/lots/sizing configured
+  //   5. Risk        — at least one of SL % or Target % is set
   int get _completionScore {
     int score = 0;
-    // Name not default
+    // 1. Name not default
     final name = _nameCtrl.text.trim();
     if (name.isNotEmpty && name != 'My Options Strategy' && name != 'My Stock Strategy') score += 20;
-    // Instrument set
+    // 2. Instrument set
     if (_stratType == _StratType.options && _underlying.isNotEmpty) score += 20;
     if (_stratType == _StratType.stocks  && _stockSymbol.isNotEmpty) score += 20;
-    // At least 1 entry condition with a value
+    // 3. At least 1 entry condition with a value
     if (_entryConds.isNotEmpty && _entryConds.any((c) => c.valueA.isNotEmpty || c.rhsIsInd || c.rhsNone)) score += 20;
-    // Legs / position filled
-    if (_stratType == _StratType.options && _legs.isNotEmpty) score += 20;
-    if (_stratType == _StratType.stocks  && _stockSymbol.isNotEmpty) score += 20;
-    // Risk: at least SL or target set
+    // 4. Position sizing configured (NOT a duplicate of bucket 2 for stocks)
+    if (_stratType == _StratType.options) {
+      // Options: needs at least 1 leg
+      if (_legs.isNotEmpty) score += 20;
+    } else {
+      // Stocks: needs shares/lots filled in OR a sizing mode other than Fixed Shares with a value
+      final sizingOk = _sharesCtrl.text.trim().isNotEmpty
+                    || _lotsCtrl.text.trim().isNotEmpty
+                    || _pctCapCtrl.text.trim().isNotEmpty;
+      if (sizingOk) score += 20;
+    }
+    // 5. Risk: at least SL or target set
     if (_slCtrl.text.trim().isNotEmpty || _tgtCtrl.text.trim().isNotEmpty) score += 20;
     return score.clamp(0, 100);
+  }
+
+  /// Returns a list of human-readable strings describing what is still missing.
+  /// Empty list means the strategy is 100% complete.
+  List<String> get _pendingItems {
+    final items = <String>[];
+    final name = _nameCtrl.text.trim();
+    if (name.isEmpty || name == 'My Options Strategy' || name == 'My Stock Strategy') {
+      items.add('Give your strategy a unique name');
+    }
+    final hasInstrument = _stratType == _StratType.options
+        ? _underlying.isNotEmpty
+        : _stockSymbol.isNotEmpty;
+    if (!hasInstrument) {
+      items.add(_stratType == _StratType.options
+          ? 'Select an underlying index (e.g. NIFTY)'
+          : 'Search and pick a stock');
+    }
+    final hasCondition = _entryConds.isNotEmpty &&
+        _entryConds.any((c) => c.valueA.isNotEmpty || c.rhsIsInd || c.rhsNone);
+    if (!hasCondition) {
+      items.add('Set at least one entry condition value');
+    }
+    if (_stratType == _StratType.options) {
+      if (_legs.isEmpty) items.add('Add at least one option leg');
+    } else {
+      final sizingOk = _sharesCtrl.text.trim().isNotEmpty
+                    || _lotsCtrl.text.trim().isNotEmpty
+                    || _pctCapCtrl.text.trim().isNotEmpty;
+      if (!sizingOk) items.add('Set quantity (shares, lots, or % of capital)');
+    }
+    final hasRisk = _slCtrl.text.trim().isNotEmpty || _tgtCtrl.text.trim().isNotEmpty;
+    if (!hasRisk) items.add('Add a Stop Loss % or Target % in Risk section');
+    return items;
   }
 
   // Returns a status label for each section based on its own completeness.
@@ -1209,6 +1288,7 @@ class _CSS extends State<CreateStrategyScreen> {
               // ── Inline action card — embedded in scroll ────────────────────
               _ActionCard(
                 score: _completionScore,
+                pendingItems: _pendingItems,
                 readyToDeploy: _readyToDeploy,
                 saving: _saving,
                 isEditing: _editing,
@@ -1497,7 +1577,7 @@ class _CSS extends State<CreateStrategyScreen> {
   // ════════════════════════════════════════════════════════════════════════════
   Widget _legsContent2() {
     final spot    = _liveSpot(_underlying);
-    final lotSize = _kLotSizes[_underlying] ?? 50.0;
+    final lotSize = _kLotSizes[_underlying] ?? 65.0;
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       // Legs tab bar: Legs | Payoff
@@ -1528,7 +1608,7 @@ class _CSS extends State<CreateStrategyScreen> {
         _Label('Position Sizing'),
         _Chips(options: const ['Fixed Lots', '% of Capital'], sel: _posSizing, onTap: (v) => setState(() => _posSizing = v)),
         const SizedBox(height: 12),
-        _PositionSizingInputs(mode: _posSizing, lotsCtrl: _lotsCtrl, capitalCtrl: _capitalCtrl, pctCapCtrl: _pctCapCtrl, lotSize: _kLotSizes[_underlying] ?? 50, underlying: _underlying),
+        _PositionSizingInputs(mode: _posSizing, lotsCtrl: _lotsCtrl, capitalCtrl: _capitalCtrl, pctCapCtrl: _pctCapCtrl, lotSize: _kLotSizes[_underlying] ?? 65, underlying: _underlying),
         const SizedBox(height: 14),
         _MarginEstimate(legs: _legs, underlying: _underlying, lots: int.tryParse(_lotsCtrl.text) ?? 1, lotSize: lotSize, spotPrice: spot),
       ],
@@ -1538,7 +1618,7 @@ class _CSS extends State<CreateStrategyScreen> {
 
   Widget _payoffContent() {
     final spot    = _liveSpot(_underlying);
-    final lotSize = _kLotSizes[_underlying] ?? 50.0;
+    final lotSize = _kLotSizes[_underlying] ?? 65.0;
     final pts     = _computePayoff(legs: _legs, spotPrice: spot, lotSize: lotSize);
     final maxPnl  = pts.map((p) => p.pnl).reduce(math.max);
     final minPnl  = pts.map((p) => p.pnl).reduce(math.min);
@@ -1774,6 +1854,15 @@ class _CSS extends State<CreateStrategyScreen> {
       _kStaticSpot[symbol] ??
       24500.0;
 
+  /// Safe numeric coercion — handles int, double, String, and null from Firestore.
+  double? _toDouble(dynamic v) {
+    if (v == null) return null;
+    if (v is double) return v;
+    if (v is int)    return v.toDouble();
+    if (v is String) return double.tryParse(v);
+    return null;
+  }
+
 } // end _CSS
 // ─────────────────────────────────────────────────────────────────────────────
 // Section card — collapsible section wrapper for the single-scroll layout
@@ -1871,6 +1960,7 @@ class _SectionCard extends StatelessWidget {
 class _ActionCard extends StatelessWidget {
   const _ActionCard({
     required this.score,
+    required this.pendingItems,
     required this.readyToDeploy,
     required this.saving,
     required this.isEditing,
@@ -1878,6 +1968,7 @@ class _ActionCard extends StatelessWidget {
     required this.onDeploy,
   });
   final int score;
+  final List<String> pendingItems;
   final bool readyToDeploy, saving, isEditing;
   final VoidCallback? onSaveDraft, onDeploy;
 
@@ -1945,19 +2036,66 @@ class _ActionCard extends StatelessWidget {
           ),
         ),
 
-        if (!readyToDeploy) ...[
+        // ── Pending checklist ─────────────────────────────────────────────────
+        if (pendingItems.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+            decoration: BoxDecoration(
+              color: _K.surfaceAlt,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: _K.divider),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
+                  const Icon(Icons.checklist_rounded, size: 13, color: _K.t3),
+                  const SizedBox(width: 6),
+                  Text(
+                    '${pendingItems.length} step${pendingItems.length == 1 ? '' : 's'} remaining',
+                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: _K.t2),
+                  ),
+                ]),
+                const SizedBox(height: 8),
+                ...pendingItems.map((item) => Padding(
+                  padding: const EdgeInsets.only(bottom: 5),
+                  child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Container(
+                      margin: const EdgeInsets.only(top: 4),
+                      width: 6, height: 6,
+                      decoration: BoxDecoration(
+                        color: score >= 60 ? _K.warning : _K.primary,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(
+                      item,
+                      style: const TextStyle(fontSize: 12, color: _K.t2, height: 1.4),
+                    )),
+                  ]),
+                )),
+              ],
+            ),
+          ),
+        ],
+
+        if (readyToDeploy) ...[
           const SizedBox(height: 10),
           Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(color: _K.surfaceAlt, borderRadius: BorderRadius.circular(10)),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: _K.profit.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: _K.profit.withValues(alpha: 0.25)),
+            ),
             child: Row(children: [
-              const Icon(Icons.info_outline_rounded, size: 13, color: _K.t3),
+              const Icon(Icons.check_circle_outline_rounded, size: 14, color: _K.profit),
               const SizedBox(width: 8),
-              Expanded(child: Text(
-                score < 40
-                    ? 'Set up your instrument, add entry conditions, and configure a leg to deploy.'
-                    : 'Almost there — add a stop-loss or target to unlock Deploy.',
-                style: const TextStyle(fontSize: 11, color: _K.t2, height: 1.4),
+              const Expanded(child: Text(
+                'All required fields are filled. You can deploy or save as draft.',
+                style: TextStyle(fontSize: 11, color: _K.profit, height: 1.4),
               )),
             ]),
           ),

@@ -96,9 +96,9 @@ interface UserStrategy {
   // start_time / end_time: "09:30 AM" or "15:00 PM" in IST
   start_time?:    string;
   end_time?:      string;
-  // trading_days: list of 0-indexed weekdays (0=Mon…6=Sun in Flutter, 1=Mon…5=Fri typical)
-  // Stored as List<int> in Firestore — 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri
-  trading_days?:  number[];
+  // trading_days: day names written by Flutter e.g. ["Mon","Tue","Wed","Thu","Fri"]
+  // Older docs may contain number[] (1=Mon…5=Fri) — engine handles both.
+  trading_days?:  (number | string)[];
 
   // Per-strategy maximum loss cap — engine exits the position if floating P&L
   // drops below -max_loss_rs (₹) regardless of the static SL level.
@@ -2190,9 +2190,17 @@ function _isWithinTradingSchedule(
   // ── Day-of-week check ─────────────────────────────────────────────────────
   const tradingDays = strategy.trading_days;
   if (tradingDays && tradingDays.length > 0) {
-    // Flutter stores 1=Mon…5=Fri. JS getUTCDay() gives 0=Sun,1=Mon…6=Sat.
-    // utcDayOfWeek 1=Mon matches Flutter 1=Mon → direct comparison works.
-    if (!tradingDays.includes(utcDayOfWeek)) {
+    // Flutter stores trading_days as string[] day names: ["Mon","Tue","Wed","Thu","Fri"]
+    // Older docs may have stored number[] (1=Mon…5=Fri).
+    // Handle both formats so existing strategies are never silently skipped.
+    const DAY_NAME_TO_NUM: Record<string, number> = {
+      sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6,
+    };
+    const normalised = tradingDays.map((d: number | string) => {
+      if (typeof d === "number") return d;
+      return DAY_NAME_TO_NUM[String(d).toLowerCase().slice(0, 3)] ?? -1;
+    });
+    if (!normalised.includes(utcDayOfWeek)) {
       return false;
     }
   }

@@ -657,6 +657,32 @@ async function suite13_liveSchedulerTest() {
     return;
   }
 
+  // Build a trading schedule that covers right now in IST
+  const istNow     = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+  // Flutter convention: trading_days is number[] where 1=Mon…5=Fri
+  // JS getUTCDay() on IST date: 0=Sun,1=Mon…6=Sat — same mapping, direct use
+  const todayNum   = istNow.getUTCDay(); // 1=Mon,2=Tue…5=Fri
+  const dayNames   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const todayName  = dayNames[todayNum];
+  const pad        = n => String(n).padStart(2,'0');
+  const h          = istNow.getUTCHours();
+  const m          = istNow.getUTCMinutes();
+  // start = 30 min ago, end = 30 min from now — always inside the window
+  const startTotalMins = Math.max(0, h * 60 + m - 30);
+  const endTotalMins   = h * 60 + m + 30;
+  const startH  = Math.floor(startTotalMins / 60);
+  const startM  = startTotalMins % 60;
+  const endH    = Math.floor(endTotalMins / 60);
+  const endM    = endTotalMins % 60;
+  const fmt12   = (hh, mm) => {
+    const ampm = hh < 12 ? 'AM' : 'PM';
+    const h12  = hh === 0 ? 12 : hh > 12 ? hh - 12 : hh;
+    return `${pad(h12)}:${pad(mm)} ${ampm}`;
+  };
+  const startTime = fmt12(startH, startM);
+  const endTime   = fmt12(endH,   endM);
+  info(`Trading schedule for test: ${startTime} – ${endTime}, days=[${todayName}(${todayNum})]`);
+
   // Create a strategy with at_market entry (will trigger on next engine run)
   const stratRef = await makeStrategy(TEST_UID, {
     status:      'watching',
@@ -665,17 +691,20 @@ async function suite13_liveSchedulerTest() {
     user_id:     TEST_UID,
     stock:       { symbol: 'NIFTY', name: 'Nifty 50', exchange: 'NSE' },
     trade:       { action: 'BUY', entry_price: 0, order_type: 'MARKET' },
-    analysis:    { target: 99999, stoploss: 1 }, // wide range so it won't auto-exit
+    analysis:    { target: 99999, stoploss: 1 },
     quantity:    1, lot_size: 1,
     product_type: 'MIS', validity: 'DAY',
-    entry_condition_type:  'at_market',  // triggers immediately
+    entry_condition_type:  'at_market',
     entry_condition_price: 0,
+    start_time:   startTime,
+    end_time:     endTime,
+    trading_days: [todayNum],  // number[], 1=Mon…5=Fri — matches engine expectation
   });
   info(`Created watching strategy ${stratRef.id} — waiting up to 90s for engine to fire...`);
 
-  // Poll for status change (engine runs every minute)
+  // Poll for status change (engine runs every minute — wait up to 2 full cycles)
   let transitioned = false;
-  for (let i = 0; i < 18; i++) { // 18 × 5s = 90s
+  for (let i = 0; i < 24; i++) { // 24 × 5s = 120s (2 full engine cycles)
     await wait(5000);
     const snap = await stratRef.get();
     const status = snap.data()?.status;
@@ -700,7 +729,7 @@ async function suite13_liveSchedulerTest() {
     process.stdout.write(`    ⏳ ${(i + 1) * 5}s — status=${status}\r`);
   }
   if (!transitioned) {
-    fail('Engine did not fire within 90s — check onStrategyEntryCheck deployment');
+    fail('Engine did not fire within 120s — check onStrategyEntryCheck deployment');
   }
 }
 

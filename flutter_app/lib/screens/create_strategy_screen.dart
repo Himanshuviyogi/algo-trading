@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 import '../blocs/auth_bloc.dart';
 import '../services/live_price_service.dart';
 import '../widgets/backtest_sheet.dart';
+import '../widgets/payoff_thumbnail.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Design tokens
@@ -1259,60 +1260,7 @@ class _CSS extends State<CreateStrategyScreen> {
     final presets = _buildPresets();
     showModalBottomSheet<void>(
       context: context, isScrollControlled: true, backgroundColor: Colors.transparent,
-      builder: (_) => DraggableScrollableSheet(
-        initialChildSize: 0.75, maxChildSize: 0.92, minChildSize: 0.4,
-        builder: (__, sc) => Container(
-          decoration: const BoxDecoration(color: _K.surface, borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-          child: Column(children: [
-            const SizedBox(height: 8),
-            Container(width: 40, height: 4, decoration: BoxDecoration(color: _K.divider, borderRadius: BorderRadius.circular(2))),
-            const Padding(
-              padding: EdgeInsets.fromLTRB(20, 16, 20, 4),
-              child: Align(alignment: Alignment.centerLeft,
-                child: Text('Strategy Templates', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: _K.t1))),
-            ),
-            const Padding(
-              padding: EdgeInsets.fromLTRB(20, 0, 20, 12),
-              child: Align(alignment: Alignment.centerLeft,
-                child: Text('Pick a preset to auto-fill the strategy builder', style: TextStyle(fontSize: 13, color: _K.t3))),
-            ),
-            Expanded(child: ListView.separated(
-              controller: sc,
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-              itemCount: presets.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 10),
-              itemBuilder: (_, i) {
-                final p = presets[i];
-                return GestureDetector(
-                  onTap: () => _applyPreset(p),
-                  child: Container(
-                    padding: const EdgeInsets.all(16), decoration: _K.card(),
-                    child: Row(children: [
-                      Container(
-                        width: 44, height: 44,
-                        decoration: BoxDecoration(color: _K.primaryBg, borderRadius: BorderRadius.circular(12)),
-                        child: Center(child: Text(p.icon, style: const TextStyle(fontSize: 22))),
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Text(p.name, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: _K.t1)),
-                        const SizedBox(height: 3),
-                        Text(p.description, style: const TextStyle(fontSize: 11, color: _K.t3)),
-                        const SizedBox(height: 6),
-                        Wrap(spacing: 6, children: [
-                          _RChip(label: p.style, color: _K.primary),
-                          _RChip(label: '${p.legs.length} legs', color: _K.t2),
-                        ]),
-                      ])),
-                      const Icon(Icons.arrow_forward_ios_rounded, size: 14, color: _K.t4),
-                    ]),
-                  ),
-                );
-              },
-            )),
-          ]),
-        ),
-      ),
+      builder: (_) => _TemplatesSheet(presets: presets, onApply: _applyPreset),
     );
   }
 
@@ -1606,12 +1554,22 @@ class _CSS extends State<CreateStrategyScreen> {
   // SECTION 4 — RISK & EXIT
   // ════════════════════════════════════════════════════════════════════════════
   Widget _riskContent() => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-    // SL + Target side by side at the top — QuantMan style
-    Row(children: [
-      Expanded(child: _NumField(ctrl: _slCtrl,  label: 'Stop Loss %',  hint: 'e.g. 50',  suffix: '%')),
-      const SizedBox(width: 12),
-      Expanded(child: _NumField(ctrl: _tgtCtrl, label: 'Target %',     hint: 'e.g. 100', suffix: '%')),
-    ]),
+    // SL + Target — quick-pick chips with custom fallback
+    _QuickChipField(
+      ctrl:    _slCtrl,
+      label:   'Stop Loss %',
+      hint:    'e.g. 50',
+      presets: const ['25', '50', '75', '100'],
+      suffix:  '%',
+    ),
+    const SizedBox(height: 14),
+    _QuickChipField(
+      ctrl:    _tgtCtrl,
+      label:   'Target %',
+      hint:    'e.g. 100',
+      presets: const ['50', '100', '150', '200'],
+      suffix:  '%',
+    ),
     const SizedBox(height: 12),
     Row(children: [
       Expanded(child: _NumField(ctrl: _maxLossCtrl, label: 'Max Loss ₹', hint: 'e.g. 5000', prefix: '₹')),
@@ -1722,10 +1680,24 @@ class _CSS extends State<CreateStrategyScreen> {
       _Chips(options: const ['Time-based', 'Signal-based'], sel: _reEntryMode, onTap: (v) => setState(() => _reEntryMode = v)),
       if (_reEntryMode == 'Time-based') ...[
         const SizedBox(height: 10),
-        Row(children: [
-          const Expanded(child: Text('Wait (minutes) before re-entering', style: TextStyle(fontSize: 11, color: _K.t3))),
-          SizedBox(width: 70, child: _MiniField(hint: '30', initial: _reEntryWait, onChanged: (v) => setState(() => _reEntryWait = v))),
-        ]),
+        const Text('Wait before re-entering', style: TextStyle(fontSize: 11, color: _K.t3)),
+        const SizedBox(height: 6),
+        Wrap(spacing: 6, runSpacing: 6, children: ['15', '30', '45', '60', '90'].map((m) {
+          final sel = _reEntryWait == m;
+          return GestureDetector(
+            onTap: () => setState(() => _reEntryWait = m),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 120),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+              decoration: BoxDecoration(
+                color: sel ? _K.primary : _K.surfaceAlt,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: sel ? _K.primary : _K.divider),
+              ),
+              child: Text('${m}m', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: sel ? Colors.white : _K.t2)),
+            ),
+          );
+        }).toList()),
       ],
     ],
   ]);
@@ -2457,7 +2429,14 @@ class _StockPositionSizingInputs extends StatelessWidget {
     padding: const EdgeInsets.all(14), decoration: _K.card(),
     child: mode == 'Fixed Shares'
         ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            _NumField(ctrl: sharesCtrl, label: 'Number of Shares', hint: '10'),
+            _StepperField(
+              ctrl: sharesCtrl,
+              label: 'Number of Shares',
+              min: 1,
+              max: 10000,
+              presets: const [5, 10, 25, 50, 100],
+              suffix: '',
+            ),
             const SizedBox(height: 10),
             Container(
               padding: const EdgeInsets.all(10),
@@ -2514,7 +2493,16 @@ class _PositionSizingInputs extends StatelessWidget {
     child: mode == 'Fixed Lots'
         ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
-              Expanded(child: _NumField(ctrl: lotsCtrl, label: 'Number of Lots', hint: '1')),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                _StepperField(
+                  ctrl: lotsCtrl,
+                  label: 'Number of Lots',
+                  min: 1,
+                  max: 50,
+                  presets: const [1, 2, 5, 10],
+                  suffix: '',
+                ),
+              ])),
               const SizedBox(width: 12),
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 const Text('Lot size', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: _K.t3)),
@@ -2845,7 +2833,7 @@ List<String> _indParams(String ind) {
   }
 }
 
-class _CondRow extends StatelessWidget {
+class _CondRow extends StatefulWidget {
   const _CondRow({
     required this.index,
     required this.cond,
@@ -2860,6 +2848,13 @@ class _CondRow extends StatelessWidget {
   final String strategyTf;
   final VoidCallback? onDelete;
   final ValueChanged<_Condition>? onChanged;
+
+  @override
+  State<_CondRow> createState() => _CondRowState();
+}
+
+class _CondRowState extends State<_CondRow> {
+  bool _advExpanded = false; // candle/timeframe advanced section
 
   static const _indsOptions = [
     'EMA', 'SMA', 'RSI', 'MACD', 'Bollinger Bands', 'Stochastic',
@@ -2998,6 +2993,13 @@ class _CondRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cond       = widget.cond;
+    final index      = widget.index;
+    final isOptions  = widget.isOptions;
+    final strategyTf = widget.strategyTf;
+    final onDelete   = widget.onDelete;
+    final onChanged  = widget.onChanged;
+
     final inds = isOptions ? _indsOptions : _indsStocks;
 
     // Guard: if current LHS indicator is invalid for strategy type, reset it
@@ -3081,29 +3083,53 @@ class _CondRow extends StatelessWidget {
               if (params.isNotEmpty) ...[
                 const SizedBox(height: 8),
                 Row(children: [
-                  Expanded(child: _LabeledMiniField(
-                    label: params[0],
-                    hint: _defaultParam(safeInd, 0),
-                    initial: cond.paramA,
-                    onChanged: (v) { cond.paramA = v; onChanged?.call(cond); },
-                  )),
+                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    _LabeledMiniField(
+                      label: params[0],
+                      hint: _defaultParam(safeInd, 0),
+                      initial: cond.paramA,
+                      onChanged: (v) { cond.paramA = v; onChanged?.call(cond); },
+                    ),
+                    const SizedBox(height: 4),
+                    _PeriodChips(
+                      indicator: safeInd, paramIndex: 0,
+                      current: cond.paramA,
+                      onTap: (v) { cond.paramA = v; onChanged?.call(cond); },
+                    ),
+                  ])),
                   if (params.length >= 2) ...[
                     const SizedBox(width: 8),
-                    Expanded(child: _LabeledMiniField(
-                      label: params[1],
-                      hint: _defaultParam(safeInd, 1),
-                      initial: cond.paramB,
-                      onChanged: (v) { cond.paramB = v; onChanged?.call(cond); },
-                    )),
+                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      _LabeledMiniField(
+                        label: params[1],
+                        hint: _defaultParam(safeInd, 1),
+                        initial: cond.paramB,
+                        onChanged: (v) { cond.paramB = v; onChanged?.call(cond); },
+                      ),
+                      const SizedBox(height: 4),
+                      _PeriodChips(
+                        indicator: safeInd, paramIndex: 1,
+                        current: cond.paramB,
+                        onTap: (v) { cond.paramB = v; onChanged?.call(cond); },
+                      ),
+                    ])),
                   ],
                   if (params.length >= 3) ...[
                     const SizedBox(width: 8),
-                    Expanded(child: _LabeledMiniField(
-                      label: params[2],
-                      hint: _defaultParam(safeInd, 2),
-                      initial: cond.paramC,
-                      onChanged: (v) { cond.paramC = v; onChanged?.call(cond); },
-                    )),
+                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      _LabeledMiniField(
+                        label: params[2],
+                        hint: _defaultParam(safeInd, 2),
+                        initial: cond.paramC,
+                        onChanged: (v) { cond.paramC = v; onChanged?.call(cond); },
+                      ),
+                      const SizedBox(height: 4),
+                      _PeriodChips(
+                        indicator: safeInd, paramIndex: 2,
+                        current: cond.paramC,
+                        onTap: (v) { cond.paramC = v; onChanged?.call(cond); },
+                      ),
+                    ])),
                   ],
                 ]),
               ],
@@ -3119,46 +3145,73 @@ class _CondRow extends StatelessWidget {
 
             const SizedBox(height: 10),
 
-            // ── Candle + Timeframe ────────────────────────────────────────────
-            Row(children: [
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                _SectionLabel('Candle'),
-                const SizedBox(height: 4),
-                _MiniDrop(
-                  value: _candleOptions.contains(cond.candleSrc) ? cond.candleSrc : 'Current Candle',
-                  items: _candleOptions,
-                  onChanged: (v) { cond.candleSrc = v!; onChanged?.call(cond); },
+            // ── Advanced: Candle + Timeframe (collapsed by default) ───────────
+            GestureDetector(
+              onTap: () => setState(() => _advExpanded = !_advExpanded),
+              child: Row(children: [
+                const Icon(Icons.tune_rounded, size: 12, color: _K.t3),
+                const SizedBox(width: 4),
+                Text(
+                  _advExpanded ? 'Hide Advanced' : 'Advanced (Candle & Timeframe)',
+                  style: const TextStyle(fontSize: 11, color: _K.t3, fontWeight: FontWeight.w600),
                 ),
-              ])),
-              const SizedBox(width: 8),
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                _SectionLabel('Timeframe'),
-                const SizedBox(height: 4),
-                _MiniDrop(
-                  value: cond.timeframe.isEmpty ? 'Same as strategy' : cond.timeframe,
-                  items: _tfOptions,
-                  onChanged: (v) {
-                    cond.timeframe = (v == 'Same as strategy') ? '' : v!;
-                    onChanged?.call(cond);
-                  },
+                const SizedBox(width: 4),
+                AnimatedRotation(
+                  turns: _advExpanded ? 0.5 : 0,
+                  duration: const Duration(milliseconds: 180),
+                  child: const Icon(Icons.keyboard_arrow_down_rounded, size: 14, color: _K.t3),
                 ),
-              ])),
-            ]),
-
-            if (cond.timeframe.isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(color: _K.primaryBg, borderRadius: BorderRadius.circular(8)),
-                child: Row(children: [
-                  const Icon(Icons.schedule_rounded, size: 12, color: _K.primary),
+                if (cond.timeframe.isNotEmpty || cond.candleSrc != 'Current Candle') ...[
                   const SizedBox(width: 6),
-                  Expanded(child: Text(
-                    'Evaluating on ${cond.timeframe} candles (strategy runs on $strategyTf)',
-                    style: const TextStyle(fontSize: 10, color: _K.primary, height: 1.4),
-                  )),
-                ]),
-              ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(color: _K.warning.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(6)),
+                    child: const Text('custom', style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: _K.warning)),
+                  ),
+                ],
+              ]),
+            ),
+            if (_advExpanded) ...[
+              const SizedBox(height: 8),
+              Row(children: [
+                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  _SectionLabel('Candle'),
+                  const SizedBox(height: 4),
+                  _MiniDrop(
+                    value: _candleOptions.contains(cond.candleSrc) ? cond.candleSrc : 'Current Candle',
+                    items: _candleOptions,
+                    onChanged: (v) { cond.candleSrc = v!; onChanged?.call(cond); },
+                  ),
+                ])),
+                const SizedBox(width: 8),
+                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  _SectionLabel('Timeframe'),
+                  const SizedBox(height: 4),
+                  _MiniDrop(
+                    value: cond.timeframe.isEmpty ? 'Same as strategy' : cond.timeframe,
+                    items: _tfOptions,
+                    onChanged: (v) {
+                      cond.timeframe = (v == 'Same as strategy') ? '' : v!;
+                      onChanged?.call(cond);
+                    },
+                  ),
+                ])),
+              ]),
+              if (cond.timeframe.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(color: _K.primaryBg, borderRadius: BorderRadius.circular(8)),
+                  child: Row(children: [
+                    const Icon(Icons.schedule_rounded, size: 12, color: _K.primary),
+                    const SizedBox(width: 6),
+                    Expanded(child: Text(
+                      'Evaluating on ${cond.timeframe} candles (strategy runs on $strategyTf)',
+                      style: const TextStyle(fontSize: 10, color: _K.primary, height: 1.4),
+                    )),
+                  ]),
+                ),
+              ],
             ],
 
             const SizedBox(height: 10),
@@ -3261,7 +3314,9 @@ class _CondRow extends StatelessWidget {
                 ]),
               ),
             ] else if (!cond.rhsIsInd) ...[
-              // Numeric value input
+              // Numeric value input — with quick-pick chips for known oscillators
+              _ValueQuickPicks(indicator: safeInd, current: cond.valueA, onTap: (v) { cond.valueA = v; onChanged?.call(cond); }),
+              const SizedBox(height: 6),
               _MiniField(
                 hint: valueHint,
                 initial: cond.valueA,
@@ -3850,6 +3905,351 @@ class _RChip extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// QuickChips + Custom field — preset values shown as chips; tapping "Custom"
+// reveals the original TextEditingController-backed NumField so nothing is lost.
+// ─────────────────────────────────────────────────────────────────────────────
+class _QuickChipField extends StatefulWidget {
+  const _QuickChipField({
+    required this.ctrl,
+    required this.label,
+    required this.hint,
+    required this.presets,
+    this.prefix,
+    this.suffix,
+  });
+  final TextEditingController ctrl;
+  final String label, hint;
+  final List<String> presets;
+  final String? prefix, suffix;
+
+  @override
+  State<_QuickChipField> createState() => _QuickChipFieldState();
+}
+
+class _QuickChipFieldState extends State<_QuickChipField> {
+  bool _showCustom = false;
+
+  bool _isPreset(String v) => widget.presets.contains(v.trim());
+
+  @override
+  void initState() {
+    super.initState();
+    // If the stored value is not a preset, show the custom field immediately.
+    widget.ctrl.addListener(_onCtrlChange);
+    _showCustom = widget.ctrl.text.trim().isNotEmpty && !_isPreset(widget.ctrl.text);
+  }
+
+  void _onCtrlChange() {
+    // If user cleared the custom field, allow chips to re-select
+    if (mounted && widget.ctrl.text.trim().isEmpty && _showCustom) {
+      setState(() => _showCustom = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.ctrl.removeListener(_onCtrlChange);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final currentVal = widget.ctrl.text.trim();
+    final activePreset = _isPreset(currentVal) ? currentVal : null;
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(widget.label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: _K.t3)),
+      const SizedBox(height: 6),
+      // Chip row
+      Wrap(spacing: 6, runSpacing: 6, children: [
+        ...widget.presets.map((p) {
+          final sel = activePreset == p && !_showCustom;
+          return GestureDetector(
+            onTap: () {
+              setState(() {
+                widget.ctrl.text = p;
+                _showCustom = false;
+              });
+            },
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 120),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+              decoration: BoxDecoration(
+                color: sel ? _K.primary : _K.surfaceAlt,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: sel ? _K.primary : _K.divider),
+              ),
+              child: Text(
+                '${widget.prefix ?? ''}$p${widget.suffix ?? ''}',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: sel ? Colors.white : _K.t2),
+              ),
+            ),
+          );
+        }),
+        // Custom chip
+        GestureDetector(
+          onTap: () => setState(() {
+            _showCustom = true;
+            if (_isPreset(widget.ctrl.text)) widget.ctrl.clear();
+          }),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+            decoration: BoxDecoration(
+              color: _showCustom ? _K.primaryBg : _K.surfaceAlt,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: _showCustom ? _K.primary : _K.divider),
+            ),
+            child: Text(
+              '✏️ Custom',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _showCustom ? _K.primary : _K.t2),
+            ),
+          ),
+        ),
+      ]),
+      // Custom text field — shown only when "Custom" chip is tapped
+      if (_showCustom) ...[
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(color: _K.surfaceAlt, borderRadius: BorderRadius.circular(10), border: Border.all(color: _K.primary.withValues(alpha: 0.35))),
+          child: TextField(
+            controller: widget.ctrl,
+            autofocus: true,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: _K.t1),
+            decoration: InputDecoration(
+              hintText: widget.hint,
+              hintStyle: const TextStyle(fontSize: 12, color: _K.t3),
+              prefixText: widget.prefix,
+              suffixText: widget.suffix,
+              prefixStyle: const TextStyle(fontSize: 13, color: _K.t3),
+              suffixStyle: const TextStyle(fontSize: 13, color: _K.t3),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              border: InputBorder.none,
+            ),
+          ),
+        ),
+      ],
+    ]);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Stepper widget — +/- counter with optional preset chips.
+// Used for lots, shares quantity. Falls back to manual text if needed.
+// ─────────────────────────────────────────────────────────────────────────────
+class _StepperField extends StatefulWidget {
+  const _StepperField({
+    required this.ctrl,
+    required this.label,
+    required this.min,
+    required this.max,
+    this.presets = const [],
+    this.suffix = '',
+  });
+  final TextEditingController ctrl;
+  final String label, suffix;
+  final int min, max;
+  final List<int> presets;
+
+  @override
+  State<_StepperField> createState() => _StepperFieldState();
+}
+
+class _StepperFieldState extends State<_StepperField> {
+  int get _val => int.tryParse(widget.ctrl.text) ?? widget.min;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.ctrl.addListener(_rebuild);
+  }
+
+  @override
+  void dispose() {
+    widget.ctrl.removeListener(_rebuild);
+    super.dispose();
+  }
+
+  void _rebuild() { if (mounted) setState(() {}); }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(widget.label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: _K.t3)),
+      const SizedBox(height: 6),
+      // Preset chips row
+      if (widget.presets.isNotEmpty)
+        Wrap(spacing: 6, runSpacing: 6, children: widget.presets.map((p) {
+          final sel = _val == p;
+          return GestureDetector(
+            onTap: () { widget.ctrl.text = '$p'; },
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 120),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: sel ? _K.primary : _K.surfaceAlt,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: sel ? _K.primary : _K.divider),
+              ),
+              child: Text('$p${widget.suffix}', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: sel ? Colors.white : _K.t2)),
+            ),
+          );
+        }).toList()),
+      const SizedBox(height: 8),
+      // +/- stepper row
+      Container(
+        padding: const EdgeInsets.all(4),
+        decoration: BoxDecoration(color: _K.surfaceAlt, borderRadius: BorderRadius.circular(10), border: Border.all(color: _K.divider)),
+        child: Row(children: [
+          // Minus button
+          _StepBtn(icon: Icons.remove_rounded, enabled: _val > widget.min, onTap: () {
+            final v = (_val - 1).clamp(widget.min, widget.max);
+            widget.ctrl.text = '$v';
+          }),
+          // Current value (editable inline)
+          Expanded(child: Center(child: IntrinsicWidth(child: TextField(
+            controller: widget.ctrl,
+            textAlign: TextAlign.center,
+            keyboardType: TextInputType.number,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: _K.t1),
+            decoration: InputDecoration(
+              isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              border: InputBorder.none,
+              hintText: '${widget.min}', hintStyle: const TextStyle(fontSize: 14, color: _K.t3),
+            ),
+          )))),
+          // Plus button
+          _StepBtn(icon: Icons.add_rounded, enabled: _val < widget.max, onTap: () {
+            final v = (_val + 1).clamp(widget.min, widget.max);
+            widget.ctrl.text = '$v';
+          }),
+        ]),
+      ),
+    ]);
+  }
+}
+
+class _StepBtn extends StatelessWidget {
+  const _StepBtn({required this.icon, required this.enabled, required this.onTap});
+  final IconData icon; final bool enabled; final VoidCallback onTap;
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+    onTap: enabled ? onTap : null,
+    child: Container(
+      width: 36, height: 36,
+      decoration: BoxDecoration(
+        color: enabled ? _K.surface : Colors.transparent,
+        borderRadius: BorderRadius.circular(8),
+        border: enabled ? Border.all(color: _K.divider) : null,
+      ),
+      child: Icon(icon, size: 16, color: enabled ? _K.t1 : _K.t4),
+    ),
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Indicator-aware quick picks for the numeric RHS "Compare to" value field.
+// Shows common threshold values for oscillators; empty for price/MA indicators.
+// ─────────────────────────────────────────────────────────────────────────────
+class _ValueQuickPicks extends StatelessWidget {
+  const _ValueQuickPicks({
+    required this.indicator,
+    required this.current,
+    required this.onTap,
+  });
+  final String indicator, current;
+  final ValueChanged<String> onTap;
+
+  static const _picks = <String, List<String>>{
+    'RSI':           ['30', '40', '50', '60', '70'],
+    'Stochastic':    ['20', '50', '80'],
+    'ADX':           ['20', '25', '30'],
+    'CCI':           ['-100', '0', '100'],
+    'MACD':          ['-1', '0', '1'],
+    'PCR':           ['0.7', '1.0', '1.2'],
+    'IV / IV Rank':  ['20', '30', '50', '70'],
+    'OI':            [],
+    'Option Premium':['50', '100', '200'],
+    'ATR':           [],
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final opts = _picks[indicator];
+    if (opts == null || opts.isEmpty) return const SizedBox.shrink();
+    return Wrap(spacing: 5, runSpacing: 5, children: opts.map((v) {
+      final sel = current == v;
+      return GestureDetector(
+        onTap: () => onTap(v),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 110),
+          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+          decoration: BoxDecoration(
+            color: sel ? _K.primary : _K.surfaceAlt,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: sel ? _K.primary : _K.divider),
+          ),
+          child: Text(v, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: sel ? Colors.white : _K.t2)),
+        ),
+      );
+    }).toList());
+  }
+}
+class _PeriodChips extends StatelessWidget {
+  const _PeriodChips({
+    required this.indicator,
+    required this.paramIndex,
+    required this.current,
+    required this.onTap,
+  });
+  final String indicator;
+  final int paramIndex;       // 0 = paramA, 1 = paramB, 2 = paramC
+  final String current;
+  final ValueChanged<String> onTap;
+
+  static const _periods = <String, List<List<String>>>{
+    'EMA':             [['9','20','50','200'], ['9','20','50','200'], []],
+    'SMA':             [['9','20','50','200'], ['9','20','50','200'], []],
+    'RSI':             [['7','14','21'],       [],                   []],
+    'MACD':            [['9','12'],            ['21','26'],          ['9']],
+    'Bollinger Bands': [['10','20','50'],      ['1.5','2','2.5'],    []],
+    'Stochastic':      [['5','9','14'],        ['3','5'],            []],
+    'ADX':             [['10','14','20'],      [],                   []],
+    'ATR':             [['7','14','20'],       [],                   []],
+    'CCI':             [['14','20','50'],      [],                   []],
+    'Supertrend':      [['7','10','14'],       ['2','3','4'],        []],
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final indPeriods = _periods[indicator];
+    if (indPeriods == null || paramIndex >= indPeriods.length) return const SizedBox.shrink();
+    final opts = indPeriods[paramIndex];
+    if (opts.isEmpty) return const SizedBox.shrink();
+
+    return Wrap(spacing: 5, runSpacing: 5, children: opts.map((p) {
+      final sel = current == p;
+      return GestureDetector(
+        onTap: () => onTap(p),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 110),
+          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+          decoration: BoxDecoration(
+            color: sel ? _K.primary : _K.surfaceAlt,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: sel ? _K.primary : _K.divider),
+          ),
+          child: Text(p, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: sel ? Colors.white : _K.t2)),
+        ),
+      );
+    }).toList());
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Inline backtest result summary — shown in Section 5 after the sheet closes.
 // Uses the shared BtResult from backtest_sheet.dart.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -4004,3 +4404,243 @@ class _InlineMet extends StatelessWidget {
 }
 
 Widget _vDiv() => Container(width: 1, height: 28, margin: const EdgeInsets.symmetric(horizontal: 6), color: _K.divider);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Templates sheet — Sensibull-inspired layout with:
+//   • Bias filter tabs (Bullish / Bearish / Neutral / Volatile)
+//   • Horizontally scrolling mini payoff card row at the top
+//   • Full list below with thumbnails + description
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum _Bias { all, bullish, bearish, neutral, volatile }
+
+extension _BiasLabel on _Bias {
+  String get label {
+    switch (this) {
+      case _Bias.all:      return 'All';
+      case _Bias.bullish:  return '🟢 Bullish';
+      case _Bias.bearish:  return '🔴 Bearish';
+      case _Bias.neutral:  return '🔵 Neutral';
+      case _Bias.volatile: return '🟣 Volatile';
+    }
+  }
+  Color get color {
+    switch (this) {
+      case _Bias.all:      return _K.t2;
+      case _Bias.bullish:  return _K.profit;
+      case _Bias.bearish:  return _K.loss;
+      case _Bias.neutral:  return _K.primary;
+      case _Bias.volatile: return const Color(0xFF7C3AED);
+    }
+  }
+}
+
+_Bias _presetBias(_Preset p) {
+  final legs = p.legs;
+  final buyCalls  = legs.where((l) => l.side == 'Buy'  && l.optType == 'Call').length;
+  final sellCalls = legs.where((l) => l.side == 'Sell' && l.optType == 'Call').length;
+  final buyPuts   = legs.where((l) => l.side == 'Buy'  && l.optType == 'Put').length;
+  final sellPuts  = legs.where((l) => l.side == 'Sell' && l.optType == 'Put').length;
+  if (buyCalls > 0 && buyPuts > 0) return _Bias.volatile;
+  if (sellCalls > 0 && sellPuts > 0) return _Bias.neutral;
+  if (buyCalls > 0 && sellCalls > 0 && buyPuts == 0) return _Bias.bullish;
+  if (buyPuts  > 0 && sellPuts  > 0 && buyCalls == 0) return _Bias.bearish;
+  if (buyCalls > 0) return _Bias.bullish;
+  if (buyPuts  > 0) return _Bias.bearish;
+  if (sellCalls > 0 || sellPuts > 0) return _Bias.neutral;
+  return _Bias.neutral;
+}
+
+class _TemplatesSheet extends StatefulWidget {
+  const _TemplatesSheet({required this.presets, required this.onApply});
+  final List<_Preset> presets;
+  final ValueChanged<_Preset> onApply;
+
+  @override
+  State<_TemplatesSheet> createState() => _TemplatesSheetState();
+}
+
+class _TemplatesSheetState extends State<_TemplatesSheet> {
+  _Bias _bias = _Bias.all;
+
+  List<_Preset> get _filtered => _bias == _Bias.all
+      ? widget.presets
+      : widget.presets.where((p) => _presetBias(p) == _bias).toList();
+
+  @override
+  Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      initialChildSize: 0.82, maxChildSize: 0.95, minChildSize: 0.5,
+      builder: (_, sc) => Container(
+        decoration: const BoxDecoration(
+          color: _K.surface,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(children: [
+          // ── Handle ───────────────────────────────────────────────────────
+          const SizedBox(height: 8),
+          Center(child: Container(width: 40, height: 4, decoration: BoxDecoration(color: _K.divider, borderRadius: BorderRadius.circular(2)))),
+          const SizedBox(height: 14),
+
+          // ── Header ───────────────────────────────────────────────────────
+          const Padding(
+            padding: EdgeInsets.fromLTRB(20, 0, 20, 2),
+            child: Row(children: [
+              Text('Strategy Templates', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: _K.t1)),
+            ]),
+          ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(20, 2, 20, 12),
+            child: Align(alignment: Alignment.centerLeft,
+              child: Text('Tap a card to auto-fill the builder', style: TextStyle(fontSize: 12, color: _K.t3))),
+          ),
+
+          // ── Bias filter row ───────────────────────────────────────────────
+          SizedBox(
+            height: 34,
+            child: ListView(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              scrollDirection: Axis.horizontal,
+              children: _Bias.values.map((b) {
+                final sel = b == _bias;
+                return GestureDetector(
+                  onTap: () => setState(() => _bias = b),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 140),
+                    margin: const EdgeInsets.only(right: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: sel ? b.color : _K.surfaceAlt,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: sel ? b.color : _K.divider),
+                    ),
+                    child: Text(b.label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: sel ? Colors.white : _K.t2)),
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+
+          const SizedBox(height: 14),
+
+          // ── Horizontal quick-pick card row ────────────────────────────────
+          SizedBox(
+            height: 118,
+            child: ListView.separated(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              scrollDirection: Axis.horizontal,
+              itemCount: _filtered.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              itemBuilder: (_, i) {
+                final p = _filtered[i];
+                final thumbLegs = kPresetLegs[p.name] ??
+                    p.legs.map((l) => PayoffLeg(side: l.side, optType: l.optType, strikeN: l.strikeN, qty: l.qty)).toList();
+                final bias = _presetBias(p);
+                return GestureDetector(
+                  onTap: () => widget.onApply(p),
+                  child: Container(
+                    width: 130,
+                    padding: const EdgeInsets.fromLTRB(8, 8, 8, 6),
+                    decoration: BoxDecoration(
+                      color: _K.surfaceAlt,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: _K.divider),
+                    ),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      // Mini payoff curve
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: PayoffThumbnail(
+                          legs:         thumbLegs,
+                          spotPrice:    24500,
+                          width:        114,
+                          height:       60,
+                          borderRadius: 0,
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Row(children: [
+                        Expanded(child: Text(p.name, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: _K.t1), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                          decoration: BoxDecoration(color: bias.color.withValues(alpha: 0.10), borderRadius: BorderRadius.circular(4)),
+                          child: Text('${p.legs.length}L', style: TextStyle(fontSize: 9, fontWeight: FontWeight.w800, color: bias.color)),
+                        ),
+                      ]),
+                    ]),
+                  ),
+                );
+              },
+            ),
+          ),
+
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text('All templates', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _K.t3)),
+            ),
+          ),
+
+          // ── Full list ─────────────────────────────────────────────────────
+          Expanded(child: ListView.separated(
+            controller: sc,
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
+            itemCount: _filtered.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 10),
+            itemBuilder: (_, i) {
+              final p = _filtered[i];
+              final thumbLegs = kPresetLegs[p.name] ??
+                  p.legs.map((l) => PayoffLeg(side: l.side, optType: l.optType, strikeN: l.strikeN, qty: l.qty)).toList();
+              final bias = _presetBias(p);
+              return GestureDetector(
+                onTap: () => widget.onApply(p),
+                child: Container(
+                  padding: const EdgeInsets.all(14), decoration: _K.card(),
+                  child: Row(children: [
+                    // Thumbnail
+                    Container(
+                      width: 104, height: 62,
+                      decoration: BoxDecoration(
+                        color: _K.surfaceAlt,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: _K.divider),
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: PayoffThumbnail(
+                          legs:         thumbLegs,
+                          spotPrice:    24500,
+                          width:        104,
+                          height:       62,
+                          borderRadius: 0,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(p.name, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: _K.t1)),
+                      const SizedBox(height: 3),
+                      Text(p.description, style: const TextStyle(fontSize: 11, color: _K.t3), maxLines: 2, overflow: TextOverflow.ellipsis),
+                      const SizedBox(height: 6),
+                      Wrap(spacing: 6, children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(color: bias.color.withValues(alpha: 0.10), borderRadius: BorderRadius.circular(12)),
+                          child: Text(bias.label, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: bias.color)),
+                        ),
+                        _RChip(label: p.style, color: _K.primary),
+                        _RChip(label: '${p.legs.length}L', color: _K.t2),
+                      ]),
+                    ])),
+                    const Icon(Icons.arrow_forward_ios_rounded, size: 13, color: _K.t4),
+                  ]),
+                ),
+              );
+            },
+          )),
+        ]),
+      ),
+    );
+  }
+}

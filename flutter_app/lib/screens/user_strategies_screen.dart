@@ -9,6 +9,7 @@ import '../blocs/auth_bloc.dart';
 import '../cubits/live_price_cubit.dart';
 import '../services/live_price_service.dart';
 import '../widgets/backtest_sheet.dart';
+import '../widgets/payoff_thumbnail.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Design tokens — shared "trading terminal on paper" system used across the
@@ -1143,6 +1144,12 @@ class _StrategyCard extends StatelessWidget {
                   ],
                 ),
 
+                // ── Payoff thumbnail (options strategies only) ───────
+                if (category == 'options') ...[
+                  const SizedBox(height: 10),
+                  _PayoffThumbCard(rawData: rawData),
+                ],
+
                 // ── Price progress bar ───────────────────────────────
                 if (progress != null) ...[
                   const SizedBox(height: 12),
@@ -1693,6 +1700,103 @@ class _LivePulseDotState extends State<_LivePulseDot>
           ),
         ),
       ]),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Payoff thumbnail card — shown on options strategy cards.
+// Reads the legs list from rawData and renders a mini expiry payoff curve.
+// Falls back gracefully when no legs are present.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _PayoffThumbCard extends StatelessWidget {
+  const _PayoffThumbCard({required this.rawData});
+  final Map<String, dynamic> rawData;
+
+  @override
+  Widget build(BuildContext context) {
+    final legs = payoffLegsFromRaw(rawData);
+    if (legs.isEmpty) return const SizedBox.shrink();
+
+    // Determine strategy bias label from legs
+    final buyCalls  = legs.where((l) => l.side == 'Buy'  && l.optType == 'Call').length;
+    final sellCalls = legs.where((l) => l.side == 'Sell' && l.optType == 'Call').length;
+    final buyPuts   = legs.where((l) => l.side == 'Buy'  && l.optType == 'Put').length;
+    final sellPuts  = legs.where((l) => l.side == 'Sell' && l.optType == 'Put').length;
+
+    String biasLabel;
+    Color  biasColor;
+    if (buyCalls > 0 && buyPuts > 0) {
+      biasLabel = 'Volatile';
+      biasColor = const Color(0xFF7C3AED);
+    } else if (sellCalls > 0 && sellPuts > 0) {
+      biasLabel = 'Neutral';
+      biasColor = const Color(0xFF2C6FB0);
+    } else if (buyCalls > sellCalls) {
+      biasLabel = 'Bullish';
+      biasColor = _UT.profit;
+    } else if (buyPuts > sellPuts) {
+      biasLabel = 'Bearish';
+      biasColor = _UT.loss;
+    } else {
+      biasLabel = 'Hedged';
+      biasColor = _UT.warning;
+    }
+
+    return Container(
+      height: 72,
+      decoration: BoxDecoration(
+        color: _UT.surface2,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _UT.divider),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Stack(
+          children: [
+            // Full-width payoff curve
+            Positioned.fill(
+              child: PayoffThumbnail(
+                legs:         legs,
+                spotPrice:    24500,
+                width:        double.infinity,
+                height:       72,
+                borderRadius: 0,
+                profitColor:  _UT.profit,
+                lossColor:    _UT.loss,
+              ),
+            ),
+            // Leg count + bias label overlay (bottom-left)
+            Positioned(
+              left: 10, bottom: 8,
+              child: Row(children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: biasColor.withValues(alpha: 0.13),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: biasColor.withValues(alpha: 0.3)),
+                  ),
+                  child: Text(biasLabel, style: TextStyle(fontSize: 9, fontWeight: FontWeight.w800, color: biasColor)),
+                ),
+                const SizedBox(width: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.80),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    '${legs.length}L · Expiry P&L',
+                    style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: _UT.t2),
+                  ),
+                ),
+              ]),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

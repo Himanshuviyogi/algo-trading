@@ -1,4 +1,4 @@
-/// Represents real-time quote data for a stock from Finnhub API
+/// Represents real-time quote data for a stock symbol.
 class MarketQuote {
   /// Stock ticker symbol (e.g., "AAPL")
   final String symbol;
@@ -42,9 +42,9 @@ class MarketQuote {
   /// Returns true if the price movement is positive (change >= 0)
   bool get isPositive => change >= 0;
   
-  /// Creates a MarketQuote from Finnhub API JSON response
-  /// 
-  /// Finnhub API response format:
+  /// Creates a MarketQuote from a quote API JSON response.
+  ///
+  /// Expected response format:
   /// {
   ///   "c": 169.59,  // current price
   ///   "d": 2.46,    // change (not used, we calculate it)

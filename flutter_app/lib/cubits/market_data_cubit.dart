@@ -4,13 +4,11 @@ import 'package:equatable/equatable.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../config/finnhub_config.dart';
 import '../models/market_quote.dart';
 import '../repositories/market_data_repository.dart';
 
-// MarketIndex is no longer used internally but kept exported so existing
-// screens that import it don't break.
-import '../models/market_index.dart';
+// MarketIndex is re-exported so existing screens that import this cubit
+// can still access MarketIndex without a separate import.
 export '../models/market_index.dart';
 
 part 'market_data_state.dart';
@@ -81,7 +79,9 @@ class MarketDataCubit extends Cubit<MarketDataState> {
 
   Future<void> _fetchWatchlist() async {
     try {
-      final symbols = FinnhubConfig.watchlistSymbols;
+      // Market data is now served by the Railway live price server (LivePriceCubit).
+      // This cubit is kept as a shell for backwards compatibility; the watchlist is empty.
+      const symbols = <String>[];
       final quotes = await _repository.getMultipleQuotes(symbols);
 
       if (isClosed) return;

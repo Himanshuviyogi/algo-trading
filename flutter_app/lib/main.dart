@@ -178,9 +178,6 @@ class _MyAppState extends State<MyApp> {
             value: widget.localStorage),
         RepositoryProvider<BrokerRepository>.value(
             value: widget.brokerRepository),
-        RepositoryProvider<MarketDataRepository>(
-          create: (_) => MarketDataRepositoryImpl(),
-        ),
         RepositoryProvider<OptionChainRepository>(
           create: (_) => OptionChainRepositoryImpl(),
         ),
@@ -213,7 +210,6 @@ class _SessionManagerState extends State<_SessionManager> {
   late FeedCubit _feedCubit;
   late PlansCubit _plansCubit;
   late NotificationCubit _notificationCubit;
-  late MarketDataCubit _marketDataCubit;
   late LivePriceCubit _livePriceCubit;
   late BrokerCubit _brokerCubit;
   String? _currentUid;
@@ -253,9 +249,6 @@ class _SessionManagerState extends State<_SessionManager> {
       userId: '',
     )..initialize();
 
-    final marketRepo = MarketDataRepositoryImpl();
-    _marketDataCubit = MarketDataCubit(repository: marketRepo);
-
     _livePriceCubit = LivePriceCubit();
 
     // BrokerCubit starts idle (no uid) — load() is called on login.
@@ -279,7 +272,6 @@ class _SessionManagerState extends State<_SessionManager> {
     _subscriptionCubit.close();
     _feedCubit.close();
     _plansCubit.close();
-    _marketDataCubit.close();
     _brokerCubit.close();
 
     _subscriptionCubit = SubscriptionCubit(
@@ -291,9 +283,6 @@ class _SessionManagerState extends State<_SessionManager> {
 
     _feedCubit = FeedCubit(recommendationRepository: recRepo);
     _plansCubit = PlansCubit(planRepository: planRepo)..loadPlans();
-
-    final marketRepo = MarketDataRepositoryImpl();
-    _marketDataCubit = MarketDataCubit(repository: marketRepo);
 
     // Create a fresh BrokerCubit for this session and start streaming.
     final brokerRepo = context.read<BrokerRepository>();
@@ -318,7 +307,6 @@ class _SessionManagerState extends State<_SessionManager> {
     _feedCubit.close();
     _plansCubit.close();
     _notificationCubit.close();
-    _marketDataCubit.close();
     _livePriceCubit.close();
     _brokerCubit.close();
   }
@@ -327,7 +315,6 @@ class _SessionManagerState extends State<_SessionManager> {
     _subscriptionCubit.close();
     _feedCubit.close();
     _plansCubit.close();
-    _marketDataCubit.close();
     _brokerCubit.close();
     // NotificationCubit stays alive — just clear the userId
     _notificationCubit.updateUserId('');
@@ -348,9 +335,6 @@ class _SessionManagerState extends State<_SessionManager> {
     );
     _feedCubit = FeedCubit(recommendationRepository: recRepo);
     _plansCubit = PlansCubit(planRepository: planRepo);
-
-    final marketRepo = MarketDataRepositoryImpl();
-    _marketDataCubit = MarketDataCubit(repository: marketRepo);
 
     // Reset BrokerCubit to idle (uid = '') on logout.
     final brokerRepo = context.read<BrokerRepository>();
@@ -385,7 +369,6 @@ class _SessionManagerState extends State<_SessionManager> {
           BlocProvider<PlansCubit>.value(value: _plansCubit),
           BlocProvider<SubscriptionCubit>.value(value: _subscriptionCubit),
           BlocProvider<FeedCubit>.value(value: _feedCubit),
-          BlocProvider<MarketDataCubit>.value(value: _marketDataCubit),
           BlocProvider<LivePriceCubit>.value(value: _livePriceCubit),
           BlocProvider<BrokerCubit>.value(value: _brokerCubit),
         ],

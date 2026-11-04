@@ -1,0 +1,8 @@
+# Service account keys — never commit these
+*-service-account.json
+*.json.key
+serviceAccountKey.json
+
+# Node modules
+node_modules/
+package-lock.json

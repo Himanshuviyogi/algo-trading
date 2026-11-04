@@ -1,0 +1,13 @@
+{
+  "name": "algo-trading-scripts",
+  "version": "1.0.0",
+  "description": "One-time data migration scripts for the algo-trading Firebase project",
+  "private": true,
+  "scripts": {
+    "migrate:tokens": "node migrate_instrument_tokens.js"
+  },
+  "dependencies": {
+    "axios": "^1.20.0",
+    "firebase-admin": "^12.2.0"
+  }
+}

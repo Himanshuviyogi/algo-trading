@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -10,6 +9,7 @@ import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import '../blocs/auth_bloc.dart';
 import '../services/live_price_service.dart';
+import '../widgets/backtest_sheet.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Design tokens
@@ -79,6 +79,13 @@ class _StockInstrument {
         exchange: d['exchange'] as String? ?? 'NSE',
       );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Price server URL (used for instrument search; backtest URL lives in backtest_sheet.dart)
+// ─────────────────────────────────────────────────────────────────────────────
+const String _kServerUrl = String.fromEnvironment(
+  'PRICE_SERVER_URL', defaultValue: 'http://31.172.87.141:3002',
+);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Async instrument search — price server primary, Firestore fallback
@@ -328,46 +335,6 @@ List<_Preset> _buildPresets() => [
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Backtest
-// ─────────────────────────────────────────────────────────────────────────────
-const String _kServerUrl = String.fromEnvironment(
-  'PRICE_SERVER_URL', defaultValue: 'http://31.172.87.141:3002',
-);
-
-class _BacktestResult {
-  final double totalPnl, maxDrawdown, winRate;
-  final int totalTrades, winTrades;
-  final List<double> equityCurve;
-  final String? interval, fromDate, toDate;
-  final int? candleCount;
-  final String source;
-
-  const _BacktestResult({
-    required this.totalPnl, required this.totalTrades, required this.winTrades,
-    required this.maxDrawdown, required this.winRate, required this.equityCurve,
-    this.interval, this.candleCount, this.fromDate, this.toDate, this.source = 'angel_one',
-  });
-
-  factory _BacktestResult.fromJson(Map<String, dynamic> j) {
-    final rawCurve = j['equityCurve'] as List<dynamic>? ?? [];
-    final curve    = rawCurve.map((v) => (v as num).toDouble()).toList();
-    return _BacktestResult(
-      totalPnl:    (j['totalPnl']    as num?)?.toDouble() ?? 0,
-      totalTrades: (j['totalTrades'] as num?)?.toInt()    ?? 0,
-      winTrades:   (j['winTrades']   as num?)?.toInt()    ?? 0,
-      maxDrawdown: (j['maxDrawdown'] as num?)?.toDouble() ?? 0,
-      winRate:     (j['winRate']     as num?)?.toDouble() ?? 0,
-      equityCurve: curve.isEmpty ? [0, 0] : curve,
-      interval:    j['interval']    as String?,
-      candleCount: (j['candleCount'] as num?)?.toInt(),
-      fromDate:    j['fromDate']    as String?,
-      toDate:      j['toDate']      as String?,
-      source:      j['source']      as String? ?? 'angel_one',
-    );
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Payoff diagram helpers
 // ─────────────────────────────────────────────────────────────────────────────
 class _PayoffPoint { final double spot, pnl; const _PayoffPoint({required this.spot, required this.pnl}); }
@@ -534,9 +501,8 @@ class _CSS extends State<CreateStrategyScreen> {
   String _reEntryWait      = '30';            // minutes to wait before re-entry
 
   // ── Backtest ───────────────────────────────────────────────────────────────
-  _BacktestResult? _btResult;
-  bool             _btRunning    = false;
-  String           _btRange      = '3 Months'; // backtest date range
+  BtResult? _btResult;
+  String    _btRange = '3 Months'; // backtest date range
 
   // (single-scroll — no step list needed)
 
@@ -805,53 +771,6 @@ class _CSS extends State<CreateStrategyScreen> {
     if (choice == 'discard') context.pop();
     else if (choice == 'draft') await _saveDraft();
     // 'stay' or null → do nothing
-  }
-
-  // ── Backtest ───────────────────────────────────────────────────────────────
-  Future<void> _runBacktest() async {
-    setState(() { _btRunning = true; _btResult = null; });
-    try {
-      final user  = FirebaseAuth.instance.currentUser;
-      final token = user != null ? await user.getIdToken(true) : null;
-      final headers = <String, String>{
-        'Content-Type': 'application/json', 'Accept': 'application/json',
-        if (token != null) 'Authorization': 'Bearer $token',
-      };
-      final payload = <String, dynamic>{
-        'underlying': _stratType == _StratType.options ? _underlying : _stockSymbol,
-        'timeframe':  _stratType == _StratType.options ? _tf : _stockTf,
-        'slPct':      _slCtrl.text.trim().isEmpty  ? '50'  : _slCtrl.text.trim(),
-        'tgtPct':     _tgtCtrl.text.trim().isEmpty ? '100' : _tgtCtrl.text.trim(),
-        'range':      _btRange,
-        'action':     _stratType == _StratType.options
-                        ? (_style == 'Selling' ? 'SELL' : 'BUY')
-                        : (_stockStyle == 'Long' ? 'BUY' : 'SELL'),
-        'shares':     int.tryParse(_sharesCtrl.text.trim()) ?? 10,
-        'entryConds': _entryConds.map((c) => c.toMap()).toList(),
-        'exitConds':  _exitConds.map((c) => c.toMap()).toList(),
-        if (_stratType == _StratType.options)
-          'legs': _legs.map((l) => l.toMap()).toList(),
-      };
-      final res = await http
-          .post(Uri.parse('$_kServerUrl/backtest'), headers: headers, body: jsonEncode(payload))
-          .timeout(const Duration(seconds: 60));
-      if (!mounted) return;
-      if (res.statusCode == 429) { _snack('Backtest already running — please wait.', err: true); return; }
-      if (res.statusCode != 200) {
-        String errMsg = 'Server error ${res.statusCode}';
-        try { final body = jsonDecode(res.body) as Map<String, dynamic>; errMsg = body['error'] as String? ?? errMsg; } catch (_) {}
-        _snack('Backtest failed: $errMsg', err: true); return;
-      }
-      final body = jsonDecode(res.body) as Map<String, dynamic>;
-      if (body['success'] != true) { _snack('Backtest failed: ${body['error'] ?? 'Unknown error'}', err: true); return; }
-      setState(() => _btResult = _BacktestResult.fromJson(body));
-    } on TimeoutException {
-      if (mounted) _snack('Backtest timed out — try a shorter range or higher timeframe.', err: true);
-    } catch (e) {
-      if (mounted) _snack('Backtest error: $e', err: true);
-    } finally {
-      if (mounted) setState(() => _btRunning = false);
-    }
   }
 
   // ── Apply preset ───────────────────────────────────────────────────────────
@@ -1814,24 +1733,116 @@ class _CSS extends State<CreateStrategyScreen> {
   // ════════════════════════════════════════════════════════════════════════════
   // SECTION 5 — BACKTEST
   // ════════════════════════════════════════════════════════════════════════════
-  Widget _backtestContent() => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-    const Text('Period', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: _K.t3)),
-    const SizedBox(height: 8),
-    Wrap(spacing: 8, runSpacing: 8, children: ['1 Month', '3 Months', '6 Months', '1 Year', '2 Years'].map((r) {
-      final sel = _btRange == r;
-      return GestureDetector(
-        onTap: () => setState(() { _btRange = r; _btResult = null; }),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 120),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-          decoration: BoxDecoration(color: sel ? _K.primary : _K.surfaceAlt, borderRadius: BorderRadius.circular(20), border: Border.all(color: sel ? _K.primary : _K.divider)),
-          child: Text(r, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: sel ? Colors.white : _K.t2)),
+  // SECTION 5 — BACKTEST
+  // ════════════════════════════════════════════════════════════════════════════
+  Widget _backtestContent() {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      // Period selector — kept here so saving still captures _btRange
+      const Text('Period', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: _K.t3)),
+      const SizedBox(height: 8),
+      Wrap(spacing: 8, runSpacing: 8, children: ['1 Month', '3 Months', '6 Months', '1 Year', '2 Years'].map((r) {
+        final sel = _btRange == r;
+        return GestureDetector(
+          onTap: () => setState(() { _btRange = r; _btResult = null; }),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+            decoration: BoxDecoration(
+              color: sel ? _K.primary : _K.surfaceAlt,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: sel ? _K.primary : _K.divider),
+            ),
+            child: Text(r, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: sel ? Colors.white : _K.t2)),
+          ),
+        );
+      }).toList()),
+
+      const SizedBox(height: 16),
+
+      // ── Result summary card (shown after a run) ──────────────────────────
+      if (_btResult != null) ...[
+        _BtInlineResult(result: _btResult!),
+        const SizedBox(height: 12),
+      ],
+
+      // ── Action button ────────────────────────────────────────────────────
+      GestureDetector(
+        onTap: _openBacktestSheet,
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          decoration: BoxDecoration(
+            color: _btResult != null ? _K.surfaceAlt : _K.primary,
+            borderRadius: BorderRadius.circular(14),
+            border: _btResult != null ? Border.all(color: _K.divider) : null,
+            boxShadow: _btResult == null ? [
+              BoxShadow(
+                color: _K.primary.withValues(alpha: 0.28),
+                blurRadius: 14,
+                offset: const Offset(0, 5),
+              ),
+            ] : null,
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                _btResult != null ? Icons.refresh_rounded : Icons.bolt_rounded,
+                color: _btResult != null ? _K.t2 : Colors.white,
+                size: 18,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                _btResult != null ? 'Re-run Backtest' : 'Run Backtest',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w800,
+                  color: _btResult != null ? _K.t2 : Colors.white,
+                ),
+              ),
+            ],
+          ),
         ),
-      );
-    }).toList()),
-    const SizedBox(height: 14),
-    _BacktestPanel(result: _btResult, running: _btRunning, onRun: _runBacktest),
-  ]);
+      ),
+    ]);
+  }
+
+  /// Build payload and open the shared BacktestSheet.
+  /// When the user closes it the returned BtResult is saved back to state.
+  Future<void> _openBacktestSheet() async {
+    final payload = <String, dynamic>{
+      'underlying': _stratType == _StratType.options ? _underlying : _stockSymbol,
+      'timeframe':  _stratType == _StratType.options ? _tf : _stockTf,
+      'slPct':      _slCtrl.text.trim().isEmpty  ? '50'  : _slCtrl.text.trim(),
+      'tgtPct':     _tgtCtrl.text.trim().isEmpty ? '100' : _tgtCtrl.text.trim(),
+      'action':     _stratType == _StratType.options
+                      ? (_style == 'Selling' ? 'SELL' : 'BUY')
+                      : (_stockStyle == 'Long' ? 'BUY' : 'SELL'),
+      'shares':     int.tryParse(_sharesCtrl.text.trim()) ?? 10,
+      'entryConds': _entryConds.map((c) => c.toMap()).toList(),
+      'exitConds':  _exitConds.map((c) => c.toMap()).toList(),
+      if (_stratType == _StratType.options)
+        'legs': _legs.map((l) => l.toMap()).toList(),
+    };
+
+    if (!mounted) return;
+    final result = await showBacktestSheet(
+      context,
+      strategyName:   _nameCtrl.text.trim().isNotEmpty ? _nameCtrl.text.trim() : 'Strategy',
+      payload:        payload,
+      initialRange:   _btRange,
+      existingResult: _btResult,
+    );
+
+    // Persist result (and the range used) back to screen state so the
+    // inline summary card stays visible after the sheet is dismissed.
+    if (result != null && mounted) {
+      setState(() {
+        _btResult = result;
+        _btRange  = result.range;
+      });
+    }
+  }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
   String _fmt(double v) {
@@ -2554,141 +2565,6 @@ class _PositionSizingInputs extends StatelessWidget {
             ),
           ]),
   );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Backtest panel
-// ─────────────────────────────────────────────────────────────────────────────
-class _BacktestPanel extends StatelessWidget {
-  const _BacktestPanel({required this.result, required this.running, required this.onRun});
-  final _BacktestResult? result; final bool running; final VoidCallback onRun;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(16),
-    decoration: _K.card(border: _K.primary.withValues(alpha: 0.2)),
-    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(children: [
-        Container(
-          width: 36, height: 36,
-          decoration: BoxDecoration(color: _K.primaryBg, borderRadius: BorderRadius.circular(10)),
-          child: const Icon(Icons.analytics_rounded, color: _K.primary, size: 20),
-        ),
-        const SizedBox(width: 12),
-        const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('Backtest', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: _K.t1)),
-          Text('Simulate on real Angel One candle data', style: TextStyle(fontSize: 11, color: _K.t3)),
-        ])),
-        if (!running && result == null)
-          GestureDetector(
-            onTap: onRun,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              decoration: BoxDecoration(color: _K.primary, borderRadius: BorderRadius.circular(20)),
-              child: const Text('Run', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: Colors.white)),
-            ),
-          ),
-        if (running)
-          const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2, color: _K.primary)),
-        if (!running && result != null)
-          GestureDetector(onTap: onRun, child: const Text('Re-run', style: TextStyle(fontSize: 12, color: _K.primary, fontWeight: FontWeight.w700))),
-      ]),
-      if (result != null) ...[
-        const SizedBox(height: 16),
-        SizedBox(height: 80, child: CustomPaint(painter: _EquityCurvePainter(curve: result!.equityCurve), child: const SizedBox.expand())),
-        const SizedBox(height: 16),
-        Row(children: [
-          _BtMetric(label: 'Net P&L',  value: '₹${_fmtBt(result!.totalPnl)}',              color: result!.totalPnl >= 0 ? _K.profit : _K.loss),
-          _BtMetric(label: 'Win Rate', value: '${result!.winRate.toStringAsFixed(1)}%',     color: result!.winRate >= 50 ? _K.profit : _K.warning),
-          _BtMetric(label: 'Trades',   value: '${result!.totalTrades}',                    color: _K.t2),
-          _BtMetric(label: 'Max DD',   value: '₹${_fmtBt(result!.maxDrawdown)}',           color: _K.loss),
-        ]),
-        if (result!.candleCount != null || result!.fromDate != null) ...[
-          const SizedBox(height: 8),
-          Row(children: [
-            const Icon(Icons.bar_chart_rounded, size: 12, color: _K.t3), const SizedBox(width: 4),
-            Expanded(child: Text(
-              [
-                if (result!.candleCount != null) '${result!.candleCount} bars',
-                if (result!.interval != null) result!.interval!,
-                if (result!.fromDate != null && result!.toDate != null)
-                  '${result!.fromDate!.substring(0, 10)} → ${result!.toDate!.substring(0, 10)}',
-              ].join('  ·  '),
-              style: const TextStyle(fontSize: 10, color: _K.t3),
-            )),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(color: _K.profitBg, borderRadius: BorderRadius.circular(4)),
-              child: const Text('LIVE DATA', style: TextStyle(fontSize: 8, fontWeight: FontWeight.w800, color: _K.profit, letterSpacing: 0.5)),
-            ),
-          ]),
-        ],
-        const SizedBox(height: 10),
-        Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(color: _K.surfaceAlt, borderRadius: BorderRadius.circular(10)),
-          child: const Row(children: [
-            Icon(Icons.info_outline_rounded, size: 13, color: _K.t3), SizedBox(width: 6),
-            Expanded(child: Text('Simulated results. Past performance does not guarantee future returns.', style: TextStyle(fontSize: 10, color: _K.t3))),
-          ]),
-        ),
-      ],
-    ]),
-  );
-
-  static String _fmtBt(double v) {
-    final a = v.abs(); final sign = v < 0 ? '-' : '';
-    if (a >= 100000) return '$sign${(a / 100000).toStringAsFixed(1)}L';
-    if (a >= 1000)   return '$sign${(a / 1000).toStringAsFixed(1)}K';
-    return v.toStringAsFixed(0);
-  }
-}
-
-class _BtMetric extends StatelessWidget {
-  const _BtMetric({required this.label, required this.value, required this.color});
-  final String label, value; final Color color;
-  @override
-  Widget build(BuildContext context) => Expanded(child: Column(children: [
-    Text(value, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: color)),
-    const SizedBox(height: 2),
-    Text(label, style: const TextStyle(fontSize: 10, color: _K.t3)),
-  ]));
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Equity curve painter
-// ─────────────────────────────────────────────────────────────────────────────
-class _EquityCurvePainter extends CustomPainter {
-  const _EquityCurvePainter({required this.curve});
-  final List<double> curve;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (curve.isEmpty) return;
-    final minV  = curve.reduce(math.min);
-    final maxV  = curve.reduce(math.max);
-    final range = (maxV - minV).abs().clamp(1.0, double.infinity);
-    final path  = Path(); final fillP = Path();
-    final pts   = curve.asMap().entries.map((e) {
-      final x = e.key / (curve.length - 1) * size.width;
-      final y = size.height - ((e.value - minV) / range * size.height);
-      return Offset(x, y);
-    }).toList();
-    path.moveTo(pts.first.dx, pts.first.dy);
-    fillP.moveTo(0, size.height);
-    fillP.lineTo(pts.first.dx, pts.first.dy);
-    for (int i = 1; i < pts.length; i++) { path.lineTo(pts[i].dx, pts[i].dy); fillP.lineTo(pts[i].dx, pts[i].dy); }
-    fillP.lineTo(size.width, size.height); fillP.close();
-    final lineColor = curve.last >= 0 ? _K.profit : _K.loss;
-    canvas.drawPath(fillP, Paint()..shader = LinearGradient(colors: [lineColor.withValues(alpha: 0.15), lineColor.withValues(alpha: 0.0)], begin: Alignment.topCenter, end: Alignment.bottomCenter).createShader(Offset.zero & size));
-    canvas.drawPath(path, Paint()..color = lineColor..strokeWidth = 2..style = PaintingStyle.stroke..strokeCap = StrokeCap.round..strokeJoin = StrokeJoin.round);
-    if (minV < 0 && maxV > 0) {
-      final zeroY = size.height - ((0 - minV) / range * size.height);
-      canvas.drawLine(Offset(0, zeroY), Offset(size.width, zeroY), Paint()..color = _K.t4..strokeWidth = 1..style = PaintingStyle.stroke);
-    }
-  }
-
-  @override bool shouldRepaint(covariant CustomPainter old) => true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3972,3 +3848,159 @@ class _RChip extends StatelessWidget {
     child: Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: color)),
   );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Inline backtest result summary — shown in Section 5 after the sheet closes.
+// Uses the shared BtResult from backtest_sheet.dart.
+// ─────────────────────────────────────────────────────────────────────────────
+class _BtInlineResult extends StatelessWidget {
+  const _BtInlineResult({required this.result});
+  final BtResult result;
+
+  @override
+  Widget build(BuildContext context) {
+    final r = result;
+    final isProfit  = r.totalPnl >= 0;
+    final pnlColor  = isProfit ? _K.profit : _K.loss;
+    final winColor  = r.winRate >= 50 ? _K.profit : _K.warning;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: _K.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: pnlColor.withValues(alpha: 0.25)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Hero P&L strip
+          Container(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+            decoration: BoxDecoration(
+              color: pnlColor.withValues(alpha: 0.06),
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+            ),
+            child: Row(
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${isProfit ? '+' : ''}₹${BtResult.fmt(r.totalPnl)}',
+                      style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w900,
+                        color: pnlColor,
+                        letterSpacing: -0.4,
+                      ),
+                    ),
+                    Text(
+                      'Net P&L  ·  ${r.range}',
+                      style: const TextStyle(fontSize: 11, color: _K.t3),
+                    ),
+                  ],
+                ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: pnlColor.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    isProfit ? '✓ Profitable' : '✗ Loss',
+                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: pnlColor),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Mini equity curve
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: SizedBox(
+              height: 60,
+              child: CustomPaint(
+                painter: BtEquityCurvePainter(curve: r.equityCurve),
+                child: const SizedBox.expand(),
+              ),
+            ),
+          ),
+
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16),
+            child: Divider(height: 20, color: _K.divider),
+          ),
+
+          // 4 inline metrics
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+            child: Row(
+              children: [
+                _InlineMet(label: 'Win Rate', value: '${r.winRate.toStringAsFixed(1)}%', color: winColor),
+                _vDiv(),
+                _InlineMet(label: 'Trades',   value: '${r.totalTrades}', color: _K.t2),
+                _vDiv(),
+                _InlineMet(label: 'Wins',     value: '${r.winTrades}',  color: _K.profit),
+                _vDiv(),
+                _InlineMet(label: 'Max DD',   value: '₹${BtResult.fmt(r.maxDrawdown)}', color: _K.loss),
+              ],
+            ),
+          ),
+
+          // Date range footer
+          if (r.fromDate != null && r.toDate != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: Row(
+                children: [
+                  const Icon(Icons.date_range_rounded, size: 11, color: _K.t3),
+                  const SizedBox(width: 4),
+                  Text(
+                    '${r.fromDate!.substring(0, 10)} → ${r.toDate!.substring(0, 10)}',
+                    style: const TextStyle(fontSize: 10, color: _K.t3),
+                  ),
+                  if (r.candleCount != null) ...[
+                    const SizedBox(width: 6),
+                    const Text('·', style: TextStyle(fontSize: 10, color: _K.t3)),
+                    const SizedBox(width: 6),
+                    Text('${r.candleCount} bars', style: const TextStyle(fontSize: 10, color: _K.t3)),
+                  ],
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: _K.profitBg,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Text(
+                      'LIVE DATA',
+                      style: TextStyle(fontSize: 8, fontWeight: FontWeight.w800, color: _K.profit, letterSpacing: 0.5),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InlineMet extends StatelessWidget {
+  const _InlineMet({required this.label, required this.value, required this.color});
+  final String label, value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Expanded(
+    child: Column(children: [
+      Text(value, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: color)),
+      const SizedBox(height: 2),
+      Text(label, style: const TextStyle(fontSize: 9.5, color: _K.t3)),
+    ]),
+  );
+}
+
+Widget _vDiv() => Container(width: 1, height: 28, margin: const EdgeInsets.symmetric(horizontal: 6), color: _K.divider);

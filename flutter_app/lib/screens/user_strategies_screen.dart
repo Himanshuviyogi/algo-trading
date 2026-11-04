@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
@@ -9,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import '../blocs/auth_bloc.dart';
 import '../cubits/live_price_cubit.dart';
 import '../services/live_price_service.dart';
+import '../widgets/backtest_sheet.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Design tokens — shared "trading terminal on paper" system used across the
@@ -821,12 +821,45 @@ class _StrategyCard extends StatelessWidget {
 
   void _backtest(BuildContext context) {
     if (uid == null) return;
-    context.push('/create-strategy', extra: {
-      'editDocId':        docId,
-      'editUid':          uid,
-      'prefill':          rawData,
-      'scrollToBacktest': true,
-    });
+    final stock    = rawData['stock'] as Map? ?? {};
+    final trade    = rawData['trade'] as Map? ?? {};
+    final analysis = rawData['analysis'] as Map? ?? {};
+
+    final sym      = stock['symbol'] as String? ?? 'NIFTY';
+    final tf       = analysis['timeframe'] as String?
+        ?? trade['timeframe'] as String?
+        ?? '15m';
+    final entryVal = (trade['entry']  as num?)?.toDouble() ?? 0;
+    final slVal    = (trade['sl']     as num?)?.toDouble() ?? 0;
+    final tgtVal   = (trade['target'] as num?)?.toDouble() ?? 0;
+    final slPct    = entryVal > 0 && slVal  > 0
+        ? ((entryVal - slVal).abs() / entryVal * 100).toStringAsFixed(1)
+        : '50';
+    final tgtPct   = entryVal > 0 && tgtVal > 0
+        ? ((tgtVal - entryVal).abs() / entryVal * 100).toStringAsFixed(1)
+        : '100';
+    final act      = (trade['action'] as String? ?? 'BUY').toUpperCase();
+    final shares   = (trade['quantity'] as num?)?.toInt() ?? 10;
+
+    final payload = <String, dynamic>{
+      'underlying': sym,
+      'timeframe':  tf,
+      'slPct':      slPct,
+      'tgtPct':     tgtPct,
+      'action':     act,
+      'shares':     shares,
+      'entryConds': rawData['entry_conditions'] as List<dynamic>? ?? [],
+      'exitConds':  rawData['exit_conditions']  as List<dynamic>? ?? [],
+      if ((rawData['legs'] as List<dynamic>? ?? []).isNotEmpty)
+        'legs': rawData['legs'],
+    };
+
+    showBacktestSheet(
+      context,
+      strategyName: label,
+      payload:      payload,
+      initialRange: rawData['backtest_range'] as String? ?? '3 Months',
+    );
   }
 
   Future<void> _deploy(BuildContext context) async {    if (uid == null || docId.isEmpty) return;

@@ -1,5 +1,6 @@
 export 'admin_seed_screen.dart';
 export 'algo_config_screen.dart';
+export 'backtest_result_screen.dart';
 export 'create_strategy_screen.dart';
 export 'user_strategies_screen.dart';
 export 'breakouts_screen.dart';

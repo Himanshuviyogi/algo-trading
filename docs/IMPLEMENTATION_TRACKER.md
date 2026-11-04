@@ -29,9 +29,11 @@ User self-service path flows through `users/{uid}/strategies`.
 | `onAlgoSignalWritten` | ✅ Done | Admin signal → auto-execute for plan subscribers. FCM via topic. |
 | `onOrderStatusChanged` | ✅ Done | FCM push on order fill/reject, includes `order_role` (entry/exit) |
 | `onStrategyEntryCheck` | ✅ Done | Core engine — scans `status=='watching'` every min, risk checks, places entry orders, updates strategy `in_position` |
-| `onPositionMonitor` | ✅ Done | Scans `status=='in_position'` every min, checks SL/target, places exit orders, writes `realised_pnl_rs` |
+| `onPositionMonitor` | ✅ Done | Scans `status=='in_position'` every min, checks SL/target, places exit orders, writes `realised_pnl_rs`. MIS auto-squareoff at 15:15 IST (09:45 UTC) — proactively exits MIS positions before broker auto-squareoff at 15:20 IST. |
 | `getDailyLossRs()` helper | ✅ Done | Sums today's `sl_hit` strategy losses in ₹ for a user (IST midnight boundary) |
 | Daily loss halt in entry check | ✅ Done | `onStrategyEntryCheck` calls `getDailyLossRs` and skips user if limit breached |
+| MIS entry cutoff | ✅ Done | `onStrategyEntryCheck` skips MIS strategies after 15:00 IST (09:30 UTC) — no new intraday positions in the last 35 mins |
+| MIS auto-squareoff | ✅ Done | `onPositionMonitor` force-exits MIS positions at 15:15 IST (09:45 UTC) with `status=closed`, `exit_reason=mis_squareoff` |
 | Daily loss halt in position monitor | ✅ Done | `onPositionMonitor` defers target exits (not SL exits) when limit breached |
 | Backward-compat for `drop_enabled` strategies | ✅ Done | Legacy strategies still handled in `onStrategyEntryCheck` |
 
@@ -173,7 +175,7 @@ User self-service path flows through `users/{uid}/strategies`.
 | Risk checks in `onStrategyEntryCheck` | ✅ Done | `algo_enabled`, `max_open_positions`, `max_order_value`, daily loss limit |
 | Risk checks in `onPositionMonitor` | ✅ Done | `algo_enabled` gate + defers target exits when daily limit hit (SL exits always proceed) |
 | `getDailyLossRs()` helper | ✅ Done | Sums today's SL-hit strategy losses per user using IST midnight |
-| `position_size_pct` → auto-compute quantity | ❌ Missing | Engine still reads raw `quantity` from strategy doc. Should compute `quantity = (capital × position_size_pct / 100) / ltp` but this is complex (requires knowing user's capital at order time) |
+| `position_size_pct` → auto-compute quantity | ✅ Done | `_computeQuantity` now handles: `Fixed Lots`, `% of Capital`, `Fixed Shares` (reads `shares` field), and legacy fallback |
 
 ---
 
@@ -193,17 +195,23 @@ Priority order — fix these before going live:
 
 | # | Item | File to fix | What to do |
 |---|---|---|---|
-| 4 | **No seed data for orders** — `OrderBookScreen` shows empty for all users | `admin_seed_screen.dart` | Add "Seed Orders" section with fake orders for current user |
-| 5 | **`GET /positions/:userId` missing from price server** | `price-server/src/server.js` | Add endpoint (app works without it via Firestore stream, but sync button on PositionsScreen may be broken) |
-| 6 | **`position_size_pct` not used by engine** | `firebase/functions/src/index.ts` | `onStrategyEntryCheck` reads `quantity` from strategy doc; should optionally auto-compute from capital × pct ÷ LTP |
-| 7 | **Cancel order button not wired in `OrderBookScreen`** | `order_book_screen.dart` | UI shows cards but no tap action for cancellation on active orders |
+| ~~4~~ | ~~**Indicator conditions (EMA/RSI/MACD) not evaluated live**~~ | ✅ Fixed | `_evalConditionsLive` + `_IndicatorState` rolling window added to `index.ts` |
+| ~~5~~ | ~~**`Fixed Shares` position sizing not handled**~~ | ✅ Fixed | `_computeQuantity` now reads `shares` field for `Fixed Shares` mode |
+| ~~6~~ | ~~**Custom trading schedule not enforced**~~ | ✅ Fixed | `_isWithinTradingSchedule` added to `onStrategyEntryCheck` |
+| ~~7~~ | ~~**Per-strategy Max Loss not enforced**~~ | ✅ Fixed | `max_loss_rs` check added to `onPositionMonitor` |
+| ~~8~~ | ~~**Locked Profit floor not enforced**~~ | ✅ Fixed | Locked profit floor dynamically raises `effectiveSL` in `onPositionMonitor` |
+| ~~9~~ | ~~**Re-entry after exit not implemented**~~ | ✅ Fixed | Re-entry resets strategy to `watching` with `re_entry_not_before` delay |
+| ~~10~~ | ~~**Exit conditions (indicator-based) not evaluated**~~ | ✅ Fixed | `exit_conditions` array evaluated in `onPositionMonitor` using same rolling state |
+| 11 | **No seed data for orders** — `OrderBookScreen` shows empty for all users | `admin_seed_screen.dart` | Add "Seed Orders" section with fake orders for current user |
+| 12 | **Cancel order button not wired in `OrderBookScreen`** | `order_book_screen.dart` | UI shows cards but no tap action for cancellation on active orders |
 
 ### 🟢 Low priority (nice to have)
 
 | # | Item | Notes |
 |---|---|---|
-| 8 | `admin_seed_screen.dart` writes `algo_signals` directly — needs `isAdmin` Firebase custom claim | Fine for development; set custom claim before production |
-| 9 | `IMPLEMENTATION_TRACKER.md` needs update after each session | This document |
+| 13 | `admin_seed_screen.dart` writes `algo_signals` directly — needs `isAdmin` Firebase custom claim | Fine for development; set custom claim before production |
+| 14 | Multi-leg options execution (legs array → separate orders per leg) | Each leg needs instrument token resolution (underlying + expiry + strike + C/P). Complex — depends on scripMaster lookup for F&O contracts. |
+| 15 | `IMPLEMENTATION_TRACKER.md` needs update after each session | This document |
 
 ---
 
